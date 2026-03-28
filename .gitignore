@@ -1,0 +1,8 @@
+build/
+CrankSurvivor.pdx/
+Source/pdex.dylib
+Source/pdex.elf
+*.o
+*.d
+*.lst
+.DS_Store
