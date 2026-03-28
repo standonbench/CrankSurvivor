@@ -562,6 +562,8 @@ void game_update_xp_magnet(void)
                 player.xpToNext = (int)(player.xpToNext * XP_LEVEL_SCALE);
                 entities_spawn_fx(player.x, player.y, 0, 4);
                 sound_play_levelup();
+                game.invertTimer = 1;
+                game.streakFlashTimer = 2;
                 game_generate_upgrades();
             }
         } else if (vacuumActive) {
@@ -810,81 +812,18 @@ static void spawn_crate(void)
 
 static const char* roll_crate_loot(void)
 {
+    // Crates now only give exotic rewards (weapons/HP/XP moved to enemy drops)
     int roll = rng_range(1, 100);
 
-    if (roll <= 25) {
-        // Weapon upgrade
-        int upgradable[MAX_WEAPONS];
-        int uc = 0;
-        for (int i = 0; i < player.weaponCount; i++) {
-            if (player.weapons[i].level < 3) {
-                upgradable[uc++] = i;
-            }
-        }
-        if (uc > 0) {
-            int idx = upgradable[rng_range(0, uc - 1)];
-            player.weapons[idx].level++;
-            player.weapons[idx].cooldownMs = weapon_get_cooldown(
-                player.weapons[idx].id, player.weapons[idx].level);
-            return "Weapon upgraded!";
-        }
-        // Fallback: heal
-        player.hp = mini(player.hp + 2, player.maxHp);
-        return "HP Restored +2";
-    } else if (roll <= 40) {
-        // New weapon
-        if (player.weaponCount < MAX_WEAPONS) {
-            int available[WEAPON_COUNT];
-            int ac = 0;
-            for (int wid = 0; wid < WEAPON_COUNT; wid++) {
-                int has = 0;
-                for (int j = 0; j < player.weaponCount; j++) {
-                    if (player.weapons[j].id == wid) { has = 1; break; }
-                }
-                if (!has) available[ac++] = wid;
-            }
-            if (ac > 0) {
-                int wid = available[rng_range(0, ac - 1)];
-                Weapon* w = &player.weapons[player.weaponCount];
-                w->id = (WeaponId)wid;
-                w->level = 1;
-                w->cooldownMs = weapon_get_cooldown(w->id, 1);
-                w->lastFiredMs = 0;
-                player.weaponCount++;
-                game.unlockedWeapons[wid] = 1;
-                weapons_calc_synergies();
-                save_write();
-                return "New weapon!";
-            }
-        }
-        // Fallback: XP burst
-        player.xp += player.xpToNext / 2;
-        if (player.xp >= player.xpToNext) {
-            player.xp -= player.xpToNext;
-            player.level++;
-            player.xpToNext = (int)(player.xpToNext * XP_LEVEL_SCALE);
-        }
-        return "XP Burst!";
-    } else if (roll <= 60) {
-        player.hp = mini(player.hp + 2, player.maxHp);
-        return "HP Restored +2";
-    } else if (roll <= 75) {
-        player.xp += player.xpToNext / 2;
-        if (player.xp >= player.xpToNext) {
-            player.xp -= player.xpToNext;
-            player.level++;
-            player.xpToNext = (int)(player.xpToNext * XP_LEVEL_SCALE);
-        }
-        return "XP Burst!";
-    } else if (roll <= 82) {
+    if (roll <= 30) {
         player.invulnUntil = pd->system->getCurrentTimeMilliseconds() + 10000;
         return "Eldritch Ward! 10s invuln";
-    } else if (roll <= 90) {
+    } else if (roll <= 55) {
         // XP vacuum
         game.xpVacuum = 30;
         game.invertTimer = 2;
         return "Tidecaller's Bell!";
-    } else if (roll <= 95) {
+    } else if (roll <= 80) {
         // Dark trap: spawn enemies around player
         for (int i = 0; i < 6 && enemyCount < MAX_ENEMIES; i++) {
             float angle = rng_float() * 2.0f * PI_F;
@@ -965,6 +904,142 @@ void game_update_crates(void)
         game.lastCrateCheckTime = game.gameTime;
         if (rng_range(1, 100) <= 40) {
             spawn_crate();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pickup system (enemy drops)
+// ---------------------------------------------------------------------------
+void game_collect_pickup(int idx)
+{
+    if (idx < 0 || idx >= pickupCount) return;
+    Pickup* p = &pickups[idx];
+
+    switch (p->type) {
+    case PICKUP_HEALTH:
+        player.hp = mini(player.hp + 2, player.maxHp);
+        snprintf(game.crateRewardText, sizeof(game.crateRewardText), "HP Restored +2");
+        break;
+    case PICKUP_XP_BURST:
+        player.xp += player.xpToNext / 2;
+        if (player.xp >= player.xpToNext) {
+            player.xp -= player.xpToNext;
+            player.level++;
+            player.xpToNext = (int)(player.xpToNext * XP_LEVEL_SCALE);
+            game_generate_upgrades();
+        }
+        snprintf(game.crateRewardText, sizeof(game.crateRewardText), "XP Burst!");
+        break;
+    case PICKUP_WEAPON_UPGRADE:
+    {
+        int upgradable[MAX_WEAPONS];
+        int uc = 0;
+        for (int i = 0; i < player.weaponCount; i++) {
+            if (player.weapons[i].level < 3) {
+                upgradable[uc++] = i;
+            }
+        }
+        if (uc > 0) {
+            int wi = upgradable[rng_range(0, uc - 1)];
+            player.weapons[wi].level++;
+            player.weapons[wi].cooldownMs = weapon_get_cooldown(
+                player.weapons[wi].id, player.weapons[wi].level);
+            snprintf(game.crateRewardText, sizeof(game.crateRewardText),
+                     "%s upgraded!", weapon_get_name(player.weapons[wi].id));
+        } else {
+            player.hp = mini(player.hp + 2, player.maxHp);
+            snprintf(game.crateRewardText, sizeof(game.crateRewardText), "HP Restored +2");
+        }
+        break;
+    }
+    case PICKUP_NEW_WEAPON:
+    {
+        if (player.weaponCount < MAX_WEAPONS) {
+            int available[WEAPON_COUNT];
+            int ac = 0;
+            for (int wid = 0; wid < WEAPON_COUNT; wid++) {
+                int has = 0;
+                for (int j = 0; j < player.weaponCount; j++) {
+                    if (player.weapons[j].id == wid) { has = 1; break; }
+                }
+                if (!has) available[ac++] = wid;
+            }
+            if (ac > 0) {
+                int wid = available[rng_range(0, ac - 1)];
+                Weapon* w = &player.weapons[player.weaponCount];
+                w->id = (WeaponId)wid;
+                w->level = 1;
+                w->cooldownMs = weapon_get_cooldown(w->id, 1);
+                w->lastFiredMs = 0;
+                player.weaponCount++;
+                game.unlockedWeapons[wid] = 1;
+                weapons_calc_synergies();
+                save_write();
+                snprintf(game.crateRewardText, sizeof(game.crateRewardText),
+                         "New: %s!", weapon_get_name((WeaponId)wid));
+                game.invertTimer = 3;
+                game_trigger_shake(2);
+            } else {
+                player.xp += player.xpToNext / 2;
+                snprintf(game.crateRewardText, sizeof(game.crateRewardText), "XP Burst!");
+            }
+        } else {
+            // All weapon slots full, give XP instead
+            player.xp += player.xpToNext / 2;
+            snprintf(game.crateRewardText, sizeof(game.crateRewardText), "XP Burst!");
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    game.crateRewardTimer = 30;
+    sound_play_crate();
+    entities_spawn_particles(p->x, p->y, 6, 0);
+    entities_spawn_fx(p->x, p->y, 0, 1);
+    p->alive = 0;
+}
+
+void game_update_pickups(void)
+{
+    if (player.dead) return;
+
+    for (int i = 0; i < pickupCount; i++) {
+        Pickup* p = &pickups[i];
+        if (!p->alive) continue;
+
+        // Bob animation
+        p->bobFrame++;
+        if (p->bobFrame % 10 == 0) {
+            int bob = ((p->bobFrame / 10) % 2 == 0) ? 1 : -1;
+            p->y = p->baseY + bob;
+        }
+
+        // Lifetime
+        p->lifeFrames--;
+        if (p->lifeFrames <= 0) {
+            p->alive = 0;
+            continue;
+        }
+
+        // Magnet attraction (80px range)
+        float dx = player.x - p->x;
+        float dy = player.y - p->y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < 6400.0f && d2 > 1.0f) { // 80px
+            float d = sqrtf(d2);
+            p->x += dx / d * 2.5f;
+            p->y += dy / d * 2.5f;
+            p->baseY += dy / d * 2.5f;
+        }
+
+        // Collection (18px)
+        if (d2 < 324.0f) {
+            game_collect_pickup(i);
+            i--; // re-check this index after swap-and-pop
+            continue;
         }
     }
 }
@@ -1090,8 +1165,11 @@ int update(void* userdata)
         enemy_bullets_update_all();
         weapons_update_tide_pool();
         weapons_update_anchors();
+        weapons_update_riptides();
+        weapons_update_depth_charges();
         game_update_xp_magnet();
         game_update_crates();
+        game_update_pickups();
         entities_cleanup_dead();
 
         // Render

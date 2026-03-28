@@ -21,6 +21,18 @@ int anchorCount = 0;
 Crate crates[MAX_CRATES];
 int crateCount = 0;
 
+Pickup pickups[MAX_PICKUPS];
+int pickupCount = 0;
+
+Riptide riptides[MAX_RIPTIDES];
+int riptideCount = 0;
+
+DepthCharge depthCharges[MAX_DEPTH_CHARGES];
+int depthChargeCount = 0;
+
+ChainVisual chainVisuals[MAX_CHAIN_VISUALS];
+int chainVisualIdx = 0;
+
 Particle particles[MAX_PARTICLES];
 int particleIdx = 0;
 
@@ -44,6 +56,14 @@ void entities_init(void)
     anchorCount = 0;
     memset(crates, 0, sizeof(crates));
     crateCount = 0;
+    memset(pickups, 0, sizeof(pickups));
+    pickupCount = 0;
+    memset(riptides, 0, sizeof(riptides));
+    riptideCount = 0;
+    memset(depthCharges, 0, sizeof(depthCharges));
+    depthChargeCount = 0;
+    memset(chainVisuals, 0, sizeof(chainVisuals));
+    chainVisualIdx = 0;
     memset(particles, 0, sizeof(particles));
     particleIdx = 0;
     memset(activeFX, 0, sizeof(activeFX));
@@ -150,6 +170,40 @@ int entities_spawn_xp_gem(float x, float y, int value)
 }
 
 // ---------------------------------------------------------------------------
+// Spawn pickup (enemy drop)
+// ---------------------------------------------------------------------------
+int entities_spawn_pickup(float x, float y)
+{
+    if (pickupCount >= MAX_PICKUPS) return -1;
+
+    // Roll pickup type
+    int roll = rng_range(1, 100);
+    PickupType type;
+    if (roll <= 35) {
+        type = PICKUP_WEAPON_UPGRADE;
+    } else if (roll <= 55) {
+        type = PICKUP_NEW_WEAPON;
+    } else if (roll <= 80) {
+        type = PICKUP_HEALTH;
+    } else {
+        type = PICKUP_XP_BURST;
+    }
+
+    Pickup* p = &pickups[pickupCount];
+    memset(p, 0, sizeof(Pickup));
+    p->x = x;
+    p->y = y;
+    p->baseY = y;
+    p->lifeFrames = 300; // 10 seconds
+    p->bobFrame = 0;
+    p->alive = 1;
+    p->type = type;
+
+    pickupCount++;
+    return pickupCount - 1;
+}
+
+// ---------------------------------------------------------------------------
 // Spawn particles (ring buffer)
 // ---------------------------------------------------------------------------
 void entities_spawn_particles(float x, float y, int count, int big)
@@ -228,6 +282,39 @@ void entities_cleanup_dead(void)
         if (!xpGems[i].alive) {
             xpGems[i] = xpGems[xpGemCount - 1];
             xpGemCount--;
+        } else {
+            i++;
+        }
+    }
+
+    // Pickups
+    i = 0;
+    while (i < pickupCount) {
+        if (!pickups[i].alive) {
+            pickups[i] = pickups[pickupCount - 1];
+            pickupCount--;
+        } else {
+            i++;
+        }
+    }
+
+    // Riptides
+    i = 0;
+    while (i < riptideCount) {
+        if (!riptides[i].alive) {
+            riptides[i] = riptides[riptideCount - 1];
+            riptideCount--;
+        } else {
+            i++;
+        }
+    }
+
+    // Depth charges
+    i = 0;
+    while (i < depthChargeCount) {
+        if (!depthCharges[i].alive) {
+            depthCharges[i] = depthCharges[depthChargeCount - 1];
+            depthChargeCount--;
         } else {
             i++;
         }

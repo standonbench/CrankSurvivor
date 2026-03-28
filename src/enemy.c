@@ -220,6 +220,17 @@ void enemy_damage(int idx, float amount)
         // Spawn XP
         entities_spawn_xp_gem(e->x, e->y, XP_PER_KILL);
 
+        // Enemy drop roll
+        {
+            int dropChance = 4;
+            if (e->type == ENEMY_ABYSSAL || e->type == ENEMY_HARBINGER || e->type == ENEMY_SEER)
+                dropChance = 12;
+            if (game.currentTier >= 3) dropChance += 1;
+            if (rng_range(1, 100) <= dropChance) {
+                entities_spawn_pickup(e->x, e->y);
+            }
+        }
+
         // Lamprey split
         if (e->type == ENEMY_LAMPREY && !e->isMini && enemyCount < MAX_ENEMIES - 1) {
             for (int m = 0; m < 2; m++) {
@@ -248,6 +259,22 @@ void enemy_damage(int idx, float amount)
                 if (dist_sq(e->x, e->y, enemies[j].x, enemies[j].y) < 2500.0f) {
                     enemy_damage(j, 3.0f);
                 }
+            }
+        }
+
+        // Depth Hunter synergy: 15% chance to drop mini-mine on kill
+        if (game.synergyDepthHunter > 0 && rng_range(1, 100) <= 15) {
+            // Mini-mine: half damage, small radius
+            if (depthChargeCount < MAX_DEPTH_CHARGES) {
+                DepthCharge* dc = &depthCharges[depthChargeCount];
+                memset(dc, 0, sizeof(DepthCharge));
+                dc->x = e->x;
+                dc->y = e->y;
+                dc->dmg = 2.0f;
+                dc->blastRadius = 25.0f;
+                dc->fuseFrames = 15; // 0.5s fuse
+                dc->alive = 1;
+                depthChargeCount++;
             }
         }
 

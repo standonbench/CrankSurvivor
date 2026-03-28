@@ -61,6 +61,10 @@ extern PlaydateAPI* pd;
 #define MAX_PARTICLES      100
 #define MAX_FX              20
 #define MAX_CRATES           1
+#define MAX_PICKUPS          8
+#define MAX_RIPTIDES         4
+#define MAX_DEPTH_CHARGES    6
+#define MAX_CHAIN_VISUALS    8
 
 // ---------------------------------------------------------------------------
 // Collision grid
@@ -106,6 +110,9 @@ typedef enum {
     WEAPON_GHOST_LIGHT,
     WEAPON_ANCHOR_DROP,
     WEAPON_FOGHORN,
+    WEAPON_CHAIN_LIGHTNING,
+    WEAPON_RIPTIDE,
+    WEAPON_DEPTH_CHARGE,
     WEAPON_COUNT
 } WeaponId;
 
@@ -191,6 +198,61 @@ typedef struct {
     int16_t bobFrame;
     uint8_t alive;
 } Crate;
+
+// ---------------------------------------------------------------------------
+// Pickup types (enemy drops)
+// ---------------------------------------------------------------------------
+typedef enum {
+    PICKUP_HEALTH = 0,
+    PICKUP_XP_BURST,
+    PICKUP_WEAPON_UPGRADE,
+    PICKUP_NEW_WEAPON,
+    PICKUP_TYPE_COUNT
+} PickupType;
+
+typedef struct {
+    float x, y, baseY;
+    int16_t lifeFrames;
+    int16_t bobFrame;
+    uint8_t alive;
+    PickupType type;
+} Pickup;
+
+// ---------------------------------------------------------------------------
+// Riptide vortex (active instance)
+// ---------------------------------------------------------------------------
+typedef struct {
+    float x, y;
+    float dmg;
+    float pullRadius;
+    float dmgMult;       // 1.0 normally, 1.5 at center for lv3
+    int16_t lifeFrames;
+    int16_t tickTimer;
+    uint8_t alive;
+    int16_t hitCooldowns[MAX_ENEMIES];
+} Riptide;
+
+// ---------------------------------------------------------------------------
+// Depth Charge (mine waiting to detonate)
+// ---------------------------------------------------------------------------
+typedef struct {
+    float x, y;
+    float blastRadius;
+    float dmg;
+    float slowFactor;    // 0 = no slow field
+    int16_t fuseFrames;  // frames until detonation
+    int16_t slowFieldLife;
+    uint8_t alive;
+    uint8_t detonated;
+} DepthCharge;
+
+// ---------------------------------------------------------------------------
+// Chain lightning visual arc
+// ---------------------------------------------------------------------------
+typedef struct {
+    float x1, y1, x2, y2;
+    int8_t life;
+} ChainVisual;
 
 typedef struct {
     float x, y;
@@ -382,6 +444,9 @@ typedef struct {
     float synergyBeamDmg;       // 0 or 1
     float synergyRuneSlow;      // 1.0 or 0.8
     float synergyCryCooldown;   // 1.0 or 0.8
+    float synergyStaticCharge;  // 0 or 1 (Chain + Tide Pool)
+    float synergyMaelstrom;     // 1.0 or 1.3 (Riptide + Brine)
+    float synergyDepthHunter;   // 0 or 1 (Depth Charge + Harpoon)
     int synergyCacheWeaponCount;
 
     // Tide pool
@@ -430,6 +495,14 @@ extern Anchor anchors[MAX_ANCHORS];
 extern int anchorCount;
 extern Crate crates[MAX_CRATES];
 extern int crateCount;
+extern Pickup pickups[MAX_PICKUPS];
+extern int pickupCount;
+extern Riptide riptides[MAX_RIPTIDES];
+extern int riptideCount;
+extern DepthCharge depthCharges[MAX_DEPTH_CHARGES];
+extern int depthChargeCount;
+extern ChainVisual chainVisuals[MAX_CHAIN_VISUALS];
+extern int chainVisualIdx;
 extern Particle particles[MAX_PARTICLES];
 extern int particleIdx;
 extern FXInstance activeFX[MAX_FX];
@@ -461,6 +534,8 @@ void game_update_xp_magnet(void);
 void game_update_crates(void);
 void game_collect_crate(void);
 void game_death_cutscene(void);
+void game_update_pickups(void);
+void game_collect_pickup(int idx);
 
 // entities.c
 void entities_init(void);
@@ -472,6 +547,7 @@ int entities_spawn_bullet(float x, float y, float dx, float dy,
                           uint8_t retargets, uint8_t imageId);
 int entities_spawn_enemy_bullet(float x, float y, float dx, float dy);
 int entities_spawn_xp_gem(float x, float y, int value);
+int entities_spawn_pickup(float x, float y);
 void entities_spawn_particles(float x, float y, int count, int big);
 void entities_spawn_fx(float x, float y, int fxType, int speed);
 
@@ -492,6 +568,9 @@ const char* weapon_get_name(WeaponId id);
 const char* weapon_get_desc(WeaponId id, int level);
 int  weapon_get_cooldown(WeaponId id, int level);
 void weapons_calc_synergies(void);
+void weapons_update_riptides(void);
+void weapons_update_depth_charges(void);
+void weapons_fire_chain_at(float x, float y, float dmg, int chainsLeft, int stunChance, int sourceEnemy);
 
 // bullets.c
 void bullets_update_all(void);
@@ -542,6 +621,9 @@ LCDBitmap* images_get_tile(int tileIdx);
 LCDBitmap* images_get_weapon_icon(WeaponId id);
 LCDBitmap* images_get_weapon_icon_large(WeaponId id);
 LCDBitmap* images_get_passive_icon(int passiveIdx);
+LCDBitmap* images_get_pickup(PickupType type);
+LCDBitmap* images_get_chain_bolt(void);
+LCDBitmap* images_get_depth_charge(void);
 int images_get_enemy_half_w(EnemyType type);
 int images_get_enemy_half_h(EnemyType type);
 

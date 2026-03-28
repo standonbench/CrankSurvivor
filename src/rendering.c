@@ -93,8 +93,10 @@ void rendering_draw_playing(void)
         int sy = (int)a->y - cy;
         LCDBitmap* aImg = images_get_anchor();
         if (aImg) pd->graphics->drawBitmap(aImg, sx - 6, sy - 6, kBitmapUnflipped);
-        // Damage radius indicator
-        GFX_CIRCLE(sx - 14, sy - 14, 28, 28, 1, kColorWhite);
+        // Pulsing damage radius indicator
+        float pulse = sinf((float)game.frameCount * 0.15f + a->x) * 3.0f;
+        int pr = 14 + (int)pulse;
+        GFX_CIRCLE(sx - pr, sy - pr, pr * 2, pr * 2, 1, kColorWhite);
     }
 
     // Crates
@@ -105,6 +107,72 @@ void rendering_draw_playing(void)
         int sy = (int)c->y - cy;
         LCDBitmap* cImg = images_get_crate();
         if (cImg) pd->graphics->drawBitmap(cImg, sx - 9, sy - 9, kBitmapUnflipped);
+    }
+
+    // Riptide vortexes (ground layer)
+    for (int i = 0; i < riptideCount; i++) {
+        Riptide* r = &riptides[i];
+        if (!r->alive) continue;
+        int sx = (int)r->x - cx;
+        int sy = (int)r->y - cy;
+        if (sx < -80 || sx > SCREEN_W + 80 || sy < -80 || sy > SCREEN_H + 80) continue;
+        int ri = (int)r->pullRadius;
+        // Rotating spiral arcs
+        pd->graphics->setDrawMode(kDrawModeXOR);
+        int phase = (game.frameCount * 8) % 360;
+        pd->graphics->drawEllipse(sx - ri, sy - ri, ri * 2, ri * 2, 1, phase, phase + 180, kColorWhite);
+        pd->graphics->drawEllipse(sx - ri, sy - ri, ri * 2, ri * 2, 1, phase + 180, phase + 360, kColorWhite);
+        int ri2 = ri * 2 / 3;
+        pd->graphics->drawEllipse(sx - ri2, sy - ri2, ri2 * 2, ri2 * 2, 1, phase + 90, phase + 270, kColorWhite);
+        pd->graphics->setDrawMode(kDrawModeCopy);
+    }
+
+    // Depth charges (ground layer)
+    for (int i = 0; i < depthChargeCount; i++) {
+        DepthCharge* dc = &depthCharges[i];
+        if (!dc->alive) continue;
+        int sx = (int)dc->x - cx;
+        int sy = (int)dc->y - cy;
+        if (sx < -60 || sx > SCREEN_W + 60 || sy < -60 || sy > SCREEN_H + 60) continue;
+
+        if (!dc->detonated) {
+            // Draw mine sprite
+            LCDBitmap* dcImg = images_get_depth_charge();
+            if (dcImg) pd->graphics->drawBitmap(dcImg, sx - 4, sy - 4, kBitmapUnflipped);
+            // Warning ring pulses (3 pulses during 1s fuse)
+            int pulse = (dc->fuseFrames * 3 / 30) % 2;
+            if (pulse == 0) {
+                int wr = (int)(dc->blastRadius * 0.5f);
+                GFX_CIRCLE(sx - wr, sy - wr, wr * 2, wr * 2, 1, kColorWhite);
+            }
+        } else {
+            // Slow field: dithered circle
+            int ri = (int)(dc->blastRadius * 0.8f);
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            GFX_CIRCLE(sx - ri, sy - ri, ri * 2, ri * 2, 1, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeCopy);
+        }
+    }
+
+    // Pickups (enemy drops)
+    for (int i = 0; i < pickupCount; i++) {
+        Pickup* p = &pickups[i];
+        if (!p->alive) continue;
+        int sx = (int)p->x - cx;
+        int sy = (int)p->y - cy;
+        if (sx < -15 || sx > SCREEN_W + 15 || sy < -15 || sy > SCREEN_H + 15) continue;
+        // Pulsing draw mode
+        int pulse = (game.frameCount / 6) % 2;
+        if (pulse) pd->graphics->setDrawMode(kDrawModeXOR);
+        LCDBitmap* pImg = images_get_pickup(p->type);
+        if (pImg) pd->graphics->drawBitmap(pImg, sx - 6, sy - 6, kBitmapUnflipped);
+        if (pulse) pd->graphics->setDrawMode(kDrawModeCopy);
+        // Attraction sparkle when close to player
+        float dx = player.x - p->x;
+        float dy = player.y - p->y;
+        if (dx * dx + dy * dy < 6400.0f && game.frameCount % 4 == 0) {
+            entities_spawn_particles(p->x, p->y, 1, 0);
+        }
     }
 
     // XP gems
@@ -230,6 +298,20 @@ void rendering_draw_playing(void)
         }
     }
 
+    // Chain lightning arcs
+    pd->graphics->setDrawMode(kDrawModeXOR);
+    for (int i = 0; i < MAX_CHAIN_VISUALS; i++) {
+        ChainVisual* cv = &chainVisuals[i];
+        if (cv->life <= 0) continue;
+        int x1 = (int)cv->x1 - cx;
+        int y1 = (int)cv->y1 - cy;
+        int x2 = (int)cv->x2 - cx;
+        int y2 = (int)cv->y2 - cy;
+        pd->graphics->drawLine(x1, y1, x2, y2, 2, kColorWhite);
+        cv->life--;
+    }
+    pd->graphics->setDrawMode(kDrawModeCopy);
+
     // Enemy bullets
     for (int i = 0; i < enemyBulletCount; i++) {
         EnemyBullet* b = &enemyBullets[i];
@@ -250,7 +332,12 @@ void rendering_draw_playing(void)
         int bsx = (int)game.brineSplash.x - cx;
         int bsy = (int)game.brineSplash.y - cy;
         pd->graphics->setDrawMode(kDrawModeXOR);
-        GFX_CIRCLE(bsx - ri, bsy - ri, ri * 2, ri * 2, 1, kColorWhite);
+        GFX_CIRCLE(bsx - ri, bsy - ri, ri * 2, ri * 2, 2, kColorWhite);
+        // Inner dithered ring for visual weight
+        if (t > 1) {
+            int ri2 = (int)(r * 0.6f);
+            GFX_CIRCLE(bsx - ri2, bsy - ri2, ri2 * 2, ri2 * 2, 1, kColorWhite);
+        }
         pd->graphics->setDrawMode(kDrawModeCopy);
         if (t >= 4) game.brineSplash.active = 0;
     }
@@ -266,9 +353,13 @@ void rendering_draw_playing(void)
         int fsy = (int)game.foghornVisual.y - cy;
         pd->graphics->setDrawMode(kDrawModeFillWhite);
         GFX_CIRCLE(fsx - ri, fsy - ri, ri * 2, ri * 2, 2, kColorWhite);
-        if (t > 2) {
+        if (t > 1) {
             int ri2 = (int)(r * 0.6f);
             GFX_CIRCLE(fsx - ri2, fsy - ri2, ri2 * 2, ri2 * 2, 1, kColorWhite);
+        }
+        if (t > 2) {
+            int ri3 = (int)(r * 0.4f);
+            GFX_CIRCLE(fsx - ri3, fsy - ri3, ri3 * 2, ri3 * 2, 1, kColorWhite);
         }
         pd->graphics->setDrawMode(kDrawModeCopy);
         if (t >= 6) game.foghornVisual.active = 0;

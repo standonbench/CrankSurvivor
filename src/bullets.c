@@ -35,9 +35,9 @@ void bullets_update_all(void)
 
         // Homing logic
         if (b->homing) {
-            // Sparkle trail
-            if (game.frameCount % 4 == 0) {
-                entities_spawn_particles(b->x, b->y, 1, 0);
+            // Enhanced sparkle trail
+            if (game.frameCount % 2 == 0) {
+                entities_spawn_particles(b->x, b->y, 1, 1);
             }
             // Acquire/reacquire target
             if (b->homingTarget < 0 || b->homingTarget >= enemyCount ||
