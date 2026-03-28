@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 static LCDBitmap* enemyImgs[ENEMY_TYPE_COUNT];
 static LCDBitmap* playerFrames[4];
-static LCDBitmap* bulletImgs[3]; // 0=bullet, 1=harpoon, 2=ghost_light
+static LCDBitmap* bulletImgs[4]; // 0=bullet, 1=harpoon, 2=ghost_light, 3=chain_bolt
 static LCDBitmap* enemyBulletImg;
 static LCDBitmap* xpGemImg;
 static LCDBitmap* xpGemImgSmall;
@@ -26,6 +26,8 @@ static LCDBitmap* tileImgs[8];
 static LCDBitmap* weaponIconImgs[WEAPON_COUNT];
 static LCDBitmap* weaponIconLargeImgs[WEAPON_COUNT];
 static LCDBitmap* passiveIconImgs[5];
+static LCDBitmap* pickupImgs[PICKUP_TYPE_COUNT];
+static LCDBitmap* depthChargeImg;
 
 static int enemyHW[ENEMY_TYPE_COUNT] = { 18, 21, 18, 27, 24, 17, 20, 23 };
 static int enemyHH[ENEMY_TYPE_COUNT] = { 18, 21, 18, 27, 24, 17, 20, 23 };
@@ -334,6 +336,23 @@ static void create_misc_images(void)
     bulletImgs[2] = make_bitmap(6, 6);
     GFX_PUSH(bulletImgs[2]); GFX_ELLIPSE(0, 0, 6, 6, kColorWhite); GFX_POP();
 
+    // Chain bolt (3x8 zigzag)
+    bulletImgs[3] = make_bitmap(3, 8);
+    GFX_PUSH(bulletImgs[3]);
+    GFX_FILL(0, 0, 2, 2, kColorWhite);
+    GFX_FILL(1, 2, 2, 2, kColorWhite);
+    GFX_FILL(0, 4, 2, 2, kColorWhite);
+    GFX_FILL(1, 6, 2, 2, kColorWhite);
+    GFX_POP();
+
+    // Depth charge (8x8 circle with crosshair)
+    depthChargeImg = make_bitmap(8, 8);
+    GFX_PUSH(depthChargeImg);
+    pd->graphics->drawEllipse(0, 0, 8, 8, 1, 0, 360, kColorWhite);
+    GFX_FILL(3, 0, 2, 8, kColorWhite);
+    GFX_FILL(0, 3, 8, 2, kColorWhite);
+    GFX_POP();
+
     // Enemy bullet (9x9 diamond)
     enemyBulletImg = make_bitmap(9, 9);
     GFX_PUSH(enemyBulletImg);
@@ -410,6 +429,28 @@ static void create_misc_images(void)
             pd->graphics->drawLine(9, 2, 9, 14, 1, kColorWhite);
             pd->graphics->drawLine(12, 0, 12, 15, 1, kColorWhite);
             break;
+        case WEAPON_CHAIN_LIGHTNING:
+            // Zigzag lightning bolt
+            pd->graphics->drawLine(7, 0, 4, 5, 1, kColorWhite);
+            pd->graphics->drawLine(4, 5, 10, 6, 1, kColorWhite);
+            pd->graphics->drawLine(10, 6, 5, 11, 1, kColorWhite);
+            pd->graphics->drawLine(5, 11, 8, 15, 1, kColorWhite);
+            GFX_FILL(6, 0, 3, 2, kColorWhite);
+            break;
+        case WEAPON_RIPTIDE:
+            // Spiral vortex
+            pd->graphics->drawEllipse(2, 2, 11, 11, 1, 0, 270, kColorWhite);
+            pd->graphics->drawEllipse(4, 4, 7, 7, 1, 90, 360, kColorWhite);
+            GFX_FILL(6, 6, 3, 3, kColorWhite);
+            break;
+        case WEAPON_DEPTH_CHARGE:
+            // Mine with spikes
+            pd->graphics->fillEllipse(3, 3, 9, 9, 0, 360, kColorWhite);
+            GFX_FILL(6, 0, 3, 3, kColorWhite);
+            GFX_FILL(6, 12, 3, 3, kColorWhite);
+            GFX_FILL(0, 6, 3, 3, kColorWhite);
+            GFX_FILL(12, 6, 3, 3, kColorWhite);
+            break;
         }
         GFX_POP();
     }
@@ -474,17 +515,120 @@ static void create_misc_images(void)
             pd->graphics->drawEllipse(17, 3, 4, 18, 1, 270, 90, kColorWhite);
             pd->graphics->drawEllipse(21, 2, 3, 21, 1, 270, 90, kColorWhite);
             break;
+        case WEAPON_CHAIN_LIGHTNING:
+            // Large zigzag lightning bolt
+            pd->graphics->drawLine(11, 0, 6, 8, 2, kColorWhite);
+            pd->graphics->drawLine(6, 8, 16, 10, 2, kColorWhite);
+            pd->graphics->drawLine(16, 10, 8, 18, 2, kColorWhite);
+            pd->graphics->drawLine(8, 18, 13, 24, 2, kColorWhite);
+            GFX_FILL(9, 0, 5, 3, kColorWhite);
+            break;
+        case WEAPON_RIPTIDE:
+            // Large spiral vortex
+            pd->graphics->drawEllipse(2, 2, 20, 20, 1, 0, 270, kColorWhite);
+            pd->graphics->drawEllipse(5, 5, 14, 14, 1, 90, 360, kColorWhite);
+            pd->graphics->drawEllipse(8, 8, 8, 8, 1, 180, 450, kColorWhite);
+            GFX_FILL(10, 10, 4, 4, kColorWhite);
+            break;
+        case WEAPON_DEPTH_CHARGE:
+            // Large mine with spikes
+            pd->graphics->fillEllipse(5, 5, 14, 14, 0, 360, kColorWhite);
+            GFX_FILL(10, 0, 4, 5, kColorWhite);
+            GFX_FILL(10, 19, 4, 5, kColorWhite);
+            GFX_FILL(0, 10, 5, 4, kColorWhite);
+            GFX_FILL(19, 10, 5, 4, kColorWhite);
+            GFX_FILL(3, 3, 3, 3, kColorWhite);
+            GFX_FILL(18, 3, 3, 3, kColorWhite);
+            GFX_FILL(3, 18, 3, 3, kColorWhite);
+            GFX_FILL(18, 18, 3, 3, kColorWhite);
+            break;
         }
         GFX_POP();
     }
 
-    // Passive icons (15x15)
+    // Passive icons (15x15) — unique per passive
     for (int i = 0; i < 5; i++) {
         passiveIconImgs[i] = make_bitmap(15, 15);
         GFX_PUSH(passiveIconImgs[i]);
-        GFX_CIRCLE(0, 0, 15, 15, 1, kColorWhite);
+        switch (i) {
+        case 0: // Oilskin Coat — shield shape
+            GFX_FILL(3, 0, 9, 2, kColorWhite);
+            GFX_FILL(1, 2, 13, 6, kColorWhite);
+            GFX_FILL(2, 8, 11, 3, kColorWhite);
+            GFX_FILL(4, 11, 7, 2, kColorWhite);
+            GFX_FILL(6, 13, 3, 2, kColorWhite);
+            break;
+        case 1: // Sea Legs — boot/chevron
+            GFX_FILL(4, 0, 5, 3, kColorWhite);
+            GFX_FILL(3, 3, 6, 4, kColorWhite);
+            GFX_FILL(2, 7, 7, 3, kColorWhite);
+            GFX_FILL(1, 10, 12, 3, kColorWhite);
+            GFX_FILL(6, 13, 7, 2, kColorWhite);
+            break;
+        case 2: // Barnacle Armor — spiked border
+            GFX_RECT(2, 2, 11, 11, kColorWhite);
+            GFX_FILL(6, 0, 3, 2, kColorWhite);
+            GFX_FILL(6, 13, 3, 2, kColorWhite);
+            GFX_FILL(0, 6, 2, 3, kColorWhite);
+            GFX_FILL(13, 6, 2, 3, kColorWhite);
+            GFX_FILL(6, 6, 3, 3, kColorWhite);
+            break;
+        case 3: // Lighthouse Lens — eye/lens
+            pd->graphics->drawEllipse(0, 3, 15, 9, 1, 0, 360, kColorWhite);
+            pd->graphics->fillEllipse(5, 5, 5, 5, 0, 360, kColorWhite);
+            pd->graphics->drawLine(0, 7, 3, 7, 1, kColorWhite);
+            pd->graphics->drawLine(12, 7, 15, 7, 1, kColorWhite);
+            break;
+        case 4: // Tidecaller — wave symbol
+            pd->graphics->drawLine(0, 7, 3, 4, 1, kColorWhite);
+            pd->graphics->drawLine(3, 4, 7, 10, 1, kColorWhite);
+            pd->graphics->drawLine(7, 10, 11, 4, 1, kColorWhite);
+            pd->graphics->drawLine(11, 4, 14, 7, 1, kColorWhite);
+            pd->graphics->drawLine(0, 11, 3, 8, 1, kColorWhite);
+            pd->graphics->drawLine(3, 8, 7, 14, 1, kColorWhite);
+            pd->graphics->drawLine(7, 14, 11, 8, 1, kColorWhite);
+            pd->graphics->drawLine(11, 8, 14, 11, 1, kColorWhite);
+            break;
+        }
         GFX_POP();
     }
+
+    // Pickup sprites (12x12) — distinct per type
+    // Health: plus/cross
+    pickupImgs[PICKUP_HEALTH] = make_bitmap(12, 12);
+    GFX_PUSH(pickupImgs[PICKUP_HEALTH]);
+    GFX_FILL(4, 0, 4, 12, kColorWhite);
+    GFX_FILL(0, 4, 12, 4, kColorWhite);
+    GFX_POP();
+
+    // XP Burst: angular star/diamond
+    pickupImgs[PICKUP_XP_BURST] = make_bitmap(12, 12);
+    GFX_PUSH(pickupImgs[PICKUP_XP_BURST]);
+    GFX_FILL(5, 0, 2, 12, kColorWhite);
+    GFX_FILL(0, 5, 12, 2, kColorWhite);
+    GFX_FILL(3, 2, 6, 8, kColorWhite);
+    GFX_FILL(2, 3, 8, 6, kColorWhite);
+    GFX_FILL(5, 5, 2, 2, kColorBlack);
+    GFX_POP();
+
+    // Weapon Upgrade: upward arrow
+    pickupImgs[PICKUP_WEAPON_UPGRADE] = make_bitmap(12, 12);
+    GFX_PUSH(pickupImgs[PICKUP_WEAPON_UPGRADE]);
+    GFX_FILL(5, 0, 2, 2, kColorWhite);
+    GFX_FILL(3, 2, 6, 2, kColorWhite);
+    GFX_FILL(1, 4, 10, 2, kColorWhite);
+    GFX_FILL(4, 6, 4, 6, kColorWhite);
+    GFX_POP();
+
+    // New Weapon: sword silhouette
+    pickupImgs[PICKUP_NEW_WEAPON] = make_bitmap(12, 12);
+    GFX_PUSH(pickupImgs[PICKUP_NEW_WEAPON]);
+    pd->graphics->drawLine(2, 10, 10, 2, 2, kColorWhite);
+    GFX_FILL(8, 0, 4, 4, kColorWhite);
+    GFX_FILL(6, 5, 3, 1, kColorWhite);
+    GFX_FILL(5, 6, 1, 3, kColorWhite);
+    GFX_FILL(0, 9, 3, 3, kColorWhite);
+    GFX_POP();
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +652,9 @@ LCDBitmap* images_get_harpoon(void) { return bulletImgs[1]; }
 LCDBitmap* images_get_anchor(void) { return anchorImg; }
 LCDBitmap* images_get_ghost_light(void) { return bulletImgs[2]; }
 LCDBitmap* images_get_crate(void) { return crateImg; }
+LCDBitmap* images_get_pickup(PickupType type) { return (type >= 0 && type < PICKUP_TYPE_COUNT) ? pickupImgs[type] : pickupImgs[0]; }
+LCDBitmap* images_get_chain_bolt(void) { return bulletImgs[3]; }
+LCDBitmap* images_get_depth_charge(void) { return depthChargeImg; }
 LCDBitmap* images_get_tile(int tileIdx) { return tileImgs[clampi(tileIdx, 0, 7)]; }
 LCDBitmap* images_get_weapon_icon(WeaponId id) { return weaponIconImgs[id]; }
 LCDBitmap* images_get_weapon_icon_large(WeaponId id) { return (id >= 0 && id < WEAPON_COUNT) ? weaponIconLargeImgs[id] : NULL; }
