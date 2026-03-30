@@ -76,6 +76,14 @@ void bullets_update_all(void)
             int ei = hitIndices[h];
             if (enemies[ei].alive) {
                 enemy_damage(ei, b->dmg);
+                // Harpoon Knockback (Heaviness)
+                if (b->imageId == 1) {
+                    float vlen = sqrtf(b->vx * b->vx + b->vy * b->vy);
+                    if (vlen > 0.01f) {
+                        enemies[ei].x += (b->vx / vlen) * 12.0f;
+                        enemies[ei].y += (b->vy / vlen) * 12.0f;
+                    }
+                }
                 if (!b->piercing) {
                     b->alive = 0;
                     break;

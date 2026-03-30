@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 Game game;
 Player player;
+uint32_t _rng_state = 1;
 
 const TierDef TIERS[TIER_COUNT] = {
     {   0.0f, "9 PM"       },
@@ -38,6 +39,9 @@ void game_init(void)
     const char* fontErr = NULL;
     game.fontBold = pd->graphics->loadFont("Asheville-Sans-14-Bold", &fontErr);
     if (!game.fontBold) DLOG("Failed to load bold font: %s", fontErr ? fontErr : "unknown");
+
+    game.fontLarge = pd->graphics->loadFont("Roobert-20-Medium", &fontErr);
+    if (!game.fontLarge) DLOG("Failed to load large font: %s", fontErr ? fontErr : "unknown");
 
     DLOG("Game initialized. DEBUG_BUILD=%d", DEBUG_BUILD);
 }
@@ -171,7 +175,7 @@ float game_get_current_speed(void)
 
 float game_get_hp_scale(void)
 {
-    static const float tierHP[] = { 1.0f, 2.0f, 3.0f, 5.0f, 7.0f };
+    static const float tierHP[] = { 1.0f, 1.8f, 2.8f, 4.0f, 6.0f };
     int tier = game_get_current_tier_index();
     float base = tierHP[tier];
     int power = game_get_player_power();
@@ -189,14 +193,14 @@ int game_get_player_power(void)
         power += player.weapons[i].level;
     }
     power += player.oilskinCoat + player.seaLegs + player.tidecaller;
-    if (player.barnacleArmor) power++;
+    if (player.saltWardMax > 0) power++;
     if (player.lighthouseLens) power++;
     return power;
 }
 
 float game_get_spawn_interval(void)
 {
-    static const float tierIntervals[] = { 1200, 800, 500, 350, 250 };
+    static const float tierIntervals[] = { 1200, 900, 650, 450, 300 };
     int tier = game_get_current_tier_index();
     float base = tierIntervals[tier];
     int power = game_get_player_power();
@@ -359,7 +363,7 @@ static void update_tier(void)
 // ---------------------------------------------------------------------------
 // Victory check
 // ---------------------------------------------------------------------------
-static void victory_cutscene_complete(void)
+void victory_cutscene_complete(void)
 {
     save_update_high_score();
     game.state = STATE_VICTORY;
@@ -384,36 +388,60 @@ static void check_victory(void)
 // ---------------------------------------------------------------------------
 static EnemyType pick_enemy_type(void)
 {
-    int tier = game_get_current_tier_index();
+    float t = game.gameTime;
     int roll = rng_range(1, 100);
 
-    if (tier == 0) {
+    if (t < 45.0f) {
+        // Tier 0: Creeper only
         return ENEMY_CREEPER;
-    } else if (tier == 1 && game.gameTime < 75.0f) {
-        if (roll <= 60) return ENEMY_CREEPER;
-        if (roll <= 80) return ENEMY_TENDRIL;
+    } else if (t < 75.0f) {
+        // +Lamprey (fast, fragile, splits)
+        if (roll <= 70) return ENEMY_CREEPER;
         return ENEMY_LAMPREY;
-    } else if (tier == 1) {
+    } else if (t < 105.0f) {
+        // +Tendril (strafing lateral pressure)
+        if (roll <= 50) return ENEMY_CREEPER;
+        if (roll <= 75) return ENEMY_LAMPREY;
+        return ENEMY_TENDRIL;
+    } else if (t < 150.0f) {
+        // +Wraith (phases through walls)
         if (roll <= 35) return ENEMY_CREEPER;
+        if (roll <= 55) return ENEMY_LAMPREY;
+        if (roll <= 75) return ENEMY_TENDRIL;
+        return ENEMY_WRAITH;
+    } else if (t < 195.0f) {
+        // +Bloat (explodes on death)
+        if (roll <= 25) return ENEMY_CREEPER;
+        if (roll <= 40) return ENEMY_LAMPREY;
         if (roll <= 55) return ENEMY_TENDRIL;
         if (roll <= 70) return ENEMY_WRAITH;
-        if (roll <= 85) return ENEMY_LAMPREY;
         return ENEMY_BLOAT;
-    } else if (tier == 2) {
-        if (roll <= 25) return ENEMY_CREEPER;
-        if (roll <= 40) return ENEMY_TENDRIL;
-        if (roll <= 55) return ENEMY_WRAITH;
-        if (roll <= 70) return ENEMY_ABYSSAL;
-        if (roll <= 85) return ENEMY_LAMPREY;
-        return ENEMY_BLOAT;
-    } else {
+    } else if (t < 255.0f) {
+        // +Abyssal (heavy tank, lunges)
+        if (roll <= 20) return ENEMY_CREEPER;
+        if (roll <= 32) return ENEMY_LAMPREY;
+        if (roll <= 44) return ENEMY_TENDRIL;
+        if (roll <= 56) return ENEMY_WRAITH;
+        if (roll <= 70) return ENEMY_BLOAT;
+        return ENEMY_ABYSSAL;
+    } else if (t < 315.0f) {
+        // +Seer (ranged attacker)
         if (roll <= 15) return ENEMY_CREEPER;
-        if (roll <= 27) return ENEMY_TENDRIL;
-        if (roll <= 39) return ENEMY_WRAITH;
-        if (roll <= 51) return ENEMY_ABYSSAL;
-        if (roll <= 63) return ENEMY_SEER;
-        if (roll <= 75) return ENEMY_LAMPREY;
-        if (roll <= 87) return ENEMY_BLOAT;
+        if (roll <= 27) return ENEMY_LAMPREY;
+        if (roll <= 37) return ENEMY_TENDRIL;
+        if (roll <= 49) return ENEMY_WRAITH;
+        if (roll <= 61) return ENEMY_BLOAT;
+        if (roll <= 75) return ENEMY_ABYSSAL;
+        return ENEMY_SEER;
+    } else {
+        // +Harbinger (summoner/buffer) — full roster
+        if (roll <= 12) return ENEMY_CREEPER;
+        if (roll <= 22) return ENEMY_LAMPREY;
+        if (roll <= 32) return ENEMY_TENDRIL;
+        if (roll <= 42) return ENEMY_WRAITH;
+        if (roll <= 52) return ENEMY_BLOAT;
+        if (roll <= 64) return ENEMY_ABYSSAL;
+        if (roll <= 78) return ENEMY_SEER;
         return ENEMY_HARBINGER;
     }
 }
@@ -461,6 +489,8 @@ static void spawn_enemy(void)
     int idx = entities_spawn_enemy(x, y, finalSpeed, type);
     if (idx >= 0) {
         enemies[idx].hp = hp;
+        enemies[idx].maxHp = hp;
+        enemies[idx].packBoost = 1.0f;
         game.unlockedEnemies[type] = 1;
 
         // Wraith cluster spawn
@@ -470,7 +500,11 @@ static void spawn_enemy(void)
                 float ox = x + rng_range(-45, 45);
                 float oy = y + rng_range(-15, 15);
                 int ci = entities_spawn_enemy(ox, oy, finalSpeed, ENEMY_WRAITH);
-                if (ci >= 0) enemies[ci].hp = hp;
+                if (ci >= 0) {
+                    enemies[ci].hp = hp;
+                    enemies[ci].maxHp = hp;
+                    enemies[ci].packBoost = 1.0f;
+                }
             }
         }
     }
@@ -524,7 +558,7 @@ void game_update_xp_magnet(void)
     if (player.dead) return;
     float px = player.x;
     float py = player.y;
-    float baseRadius = 90.0f + player.level * 3.0f + player.tidecaller * 45.0f;
+    float baseRadius = 55.0f + player.level * 2.0f + player.tidecaller * 25.0f;
     float radiusSq = baseRadius * baseRadius;
     float collectDistSq = 225.0f;
     int vacuumActive = game.xpVacuum > 0;
@@ -593,10 +627,10 @@ void game_update_xp_magnet(void)
 #define PASSIVE_TIDECALLER  4
 
 static const char* passive_names[] = {
-    "Oilskin Coat", "Sea Legs", "Barnacle Armor", "Lighthouse Lens", "Tidecaller"
+    "Oilskin Coat", "Sea Legs", "Salt Ward", "Lighthouse Lens", "Tidecaller"
 };
 static const char* passive_descs[] = {
-    "+2 max HP, full heal", "+25% move speed", "Thorns: 1 dmg on touch",
+    "+2 max HP, full heal", "+25% move speed", "Absorb shield, regen 3s",
     "All projectiles pierce", "+45px XP magnet radius"
 };
 
@@ -642,7 +676,7 @@ void game_generate_upgrades(void)
     // Passives (skip if first level, skip barnacle/lens if already owned)
     if (!isFirstLevel) {
         for (int p = 0; p < PASSIVE_COUNT; p++) {
-            if (p == PASSIVE_BARNACLE && player.barnacleArmor) continue;
+            if (p == PASSIVE_BARNACLE && player.saltWardMax >= 3) continue;
             if (p == PASSIVE_LENS && player.lighthouseLens) continue;
             pool[poolCount].type = 2; // passive
             pool[poolCount].id = p;
@@ -765,7 +799,9 @@ void game_apply_upgrade(int choice)
             player.moveSpeed = 1.8f * (1.0f + 0.25f * player.seaLegs);
             break;
         case PASSIVE_BARNACLE:
-            player.barnacleArmor = 1;
+            player.saltWardMax += (player.saltWardMax == 0) ? 2 : 1;
+            player.saltWardShield = player.saltWardMax;
+            player.saltWardRegenCD = 0;
             break;
         case PASSIVE_LENS:
             player.lighthouseLens = 1;
@@ -785,7 +821,7 @@ void game_apply_upgrade(int choice)
 // ---------------------------------------------------------------------------
 static void spawn_crate(void)
 {
-    if (crateCount > 0) return;
+    if (crateCount >= MAX_CRATES) return;
     if (player.dead) return;
 
     float x, y;
@@ -798,16 +834,15 @@ static void spawn_crate(void)
         if (dx * dx + dy * dy >= 14400.0f) break;
     }
 
-    if (crateCount >= MAX_CRATES) return;
-    Crate* c = &crates[0];
+    Crate* c = &crates[crateCount];
     c->x = x;
     c->y = y;
     c->baseY = y;
-    c->lifeFrames = 450; // 15 seconds
+    c->lifeFrames = 9999; // permanent
     c->bobFrame = 0;
     c->alive = 1;
-    crateCount = 1;
-    game.activeCrateIdx = 0;
+    crateCount++;
+    game.activeCrateIdx = crateCount - 1;
 }
 
 static const char* roll_crate_loot(void)
@@ -815,35 +850,14 @@ static const char* roll_crate_loot(void)
     // Crates now only give exotic rewards (weapons/HP/XP moved to enemy drops)
     int roll = rng_range(1, 100);
 
-    if (roll <= 30) {
+    if (roll <= 50) {
         player.invulnUntil = pd->system->getCurrentTimeMilliseconds() + 10000;
         return "Eldritch Ward! 10s invuln";
-    } else if (roll <= 55) {
+    } else {
         // XP vacuum
         game.xpVacuum = 30;
         game.invertTimer = 2;
         return "Tidecaller's Bell!";
-    } else if (roll <= 80) {
-        // Dark trap: spawn enemies around player
-        for (int i = 0; i < 6 && enemyCount < MAX_ENEMIES; i++) {
-            float angle = rng_float() * 2.0f * PI_F;
-            float ex = player.x + cosf(angle) * 45.0f;
-            float ey = player.y + sinf(angle) * 45.0f;
-            int s = game.arenaShrink;
-            ex = clampf(ex, (float)(s + 10), (float)(MAP_W - s - 10));
-            ey = clampf(ey, (float)(s + 10), (float)(MAP_H - s - 10));
-            EnemyType type = pick_enemy_type();
-            int ei = entities_spawn_enemy(ex, ey, game_get_current_speed(), type);
-            if (ei >= 0) {
-                enemies[ei].hp = 2.0f * game_get_hp_scale();
-            }
-        }
-        return "DARK TRAP! Ambush!";
-    } else {
-        // Cursed relic
-        game.cooldownBuffTimer = maxi(game.cooldownBuffTimer, 450);
-        player.cursedTimer = 450;
-        return "Cursed Relic!";
     }
 }
 
@@ -864,20 +878,14 @@ void game_update_crates(void)
 {
     if (player.dead) return;
 
-    // Update existing crate
-    if (crateCount > 0 && crates[0].alive) {
-        Crate* c = &crates[0];
+    // Update existing crates
+    for (int ci = crateCount - 1; ci >= 0; ci--) {
+        Crate* c = &crates[ci];
+        if (!c->alive) continue;
         c->bobFrame++;
         if (c->bobFrame % 10 == 0) {
             int bob = ((c->bobFrame / 10) % 2 == 0) ? 1 : -1;
             c->y = c->baseY + bob;
-        }
-        c->lifeFrames--;
-        if (c->lifeFrames <= 0) {
-            c->alive = 0;
-            crateCount = 0;
-            game.activeCrateIdx = -1;
-            return;
         }
 
         // Check player collection (441 = 21px²)
@@ -885,16 +893,17 @@ void game_update_crates(void)
         float dy = player.y - c->y;
         if (dx * dx + dy * dy < 441.0f) {
             c->alive = 0;
-            crateCount = 0;
+            // Swap-and-pop
+            crates[ci] = crates[crateCount - 1];
+            crateCount--;
             game.activeCrateIdx = -1;
             game_collect_crate();
-            return;
+            break; // only collect one per frame
         }
-        return;
     }
 
-    // Spawn logic
-    if (!game.firstCrateSpawned && game.gameTime >= 45.0f) {
+    // Spawn logic — first crate at 30s
+    if (!game.firstCrateSpawned && game.gameTime >= 30.0f) {
         game.firstCrateSpawned = 1;
         spawn_crate();
         game.lastCrateCheckTime = game.gameTime;
@@ -919,7 +928,7 @@ void game_collect_pickup(int idx)
     switch (p->type) {
     case PICKUP_HEALTH:
         player.hp = mini(player.hp + 2, player.maxHp);
-        snprintf(game.crateRewardText, sizeof(game.crateRewardText), "HP Restored +2");
+        snprintf(game.crateRewardText, sizeof(game.crateRewardText), "Boundless Vigor");
         break;
     case PICKUP_XP_BURST:
         player.xp += player.xpToNext / 2;
@@ -946,7 +955,7 @@ void game_collect_pickup(int idx)
             player.weapons[wi].cooldownMs = weapon_get_cooldown(
                 player.weapons[wi].id, player.weapons[wi].level);
             snprintf(game.crateRewardText, sizeof(game.crateRewardText),
-                     "%s upgraded!", weapon_get_name(player.weapons[wi].id));
+                     "Artifact Resonated: %s", weapon_get_name(player.weapons[wi].id));
         } else {
             player.hp = mini(player.hp + 2, player.maxHp);
             snprintf(game.crateRewardText, sizeof(game.crateRewardText), "HP Restored +2");
@@ -1017,22 +1026,27 @@ void game_update_pickups(void)
             p->y = p->baseY + bob;
         }
 
-        // Lifetime
-        p->lifeFrames--;
-        if (p->lifeFrames <= 0) {
-            p->alive = 0;
-            continue;
+        // Lifetime (health & weapon upgrades persist)
+        if (p->type != PICKUP_HEALTH && p->type != PICKUP_WEAPON_UPGRADE) {
+            p->lifeFrames--;
+            if (p->lifeFrames <= 0) {
+                p->alive = 0;
+                continue;
+            }
         }
 
-        // Magnet attraction (80px range)
         float dx = player.x - p->x;
         float dy = player.y - p->y;
         float d2 = dx * dx + dy * dy;
-        if (d2 < 6400.0f && d2 > 1.0f) { // 80px
-            float d = sqrtf(d2);
-            p->x += dx / d * 2.5f;
-            p->y += dy / d * 2.5f;
-            p->baseY += dy / d * 2.5f;
+
+        // Magnet attraction (80px range) - Exclude Health/Upgrades
+        if (p->type != PICKUP_HEALTH && p->type != PICKUP_WEAPON_UPGRADE) {
+            if (d2 < 6400.0f && d2 > 1.0f) { // 80px
+                float d = sqrtf(d2);
+                p->x += dx / d * 2.5f;
+                p->y += dy / d * 2.5f;
+                p->baseY += dy / d * 2.5f;
+            }
         }
 
         // Collection (18px)
@@ -1152,11 +1166,23 @@ int update(void* userdata)
         // Slow-motion timer decay
         if (game.slowMotionTimer > 0) game.slowMotionTimer--;
 
+        // Pickup reward text decay
+        if (game.crateRewardTimer > 0) game.crateRewardTimer--;
+
         game_update_shake();
         game_update_camera();
 
         // Oilskin regen
         update_oilskin_regen();
+
+        // Salt Ward shield regen (5s cooldown, then 1 point per 3s)
+        if (player.saltWardMax > 0 && player.saltWardShield < player.saltWardMax) {
+            if (player.saltWardRegenCD > 0) {
+                player.saltWardRegenCD--;
+            } else if (game.frameCount % 90 == 0) {
+                player.saltWardShield++;
+            }
+        }
 
         // Update entities
         player_update();
@@ -1164,6 +1190,7 @@ int update(void* userdata)
         bullets_update_all();
         enemy_bullets_update_all();
         weapons_update_tide_pool();
+        weapons_update_brine_splash();
         weapons_update_anchors();
         weapons_update_riptides();
         weapons_update_depth_charges();
@@ -1176,6 +1203,8 @@ int update(void* userdata)
         rendering_draw_playing();
         break;
     }
+
+
 
     case STATE_GAMEOVER:
         ui_draw_game_over();
@@ -1216,6 +1245,7 @@ int update(void* userdata)
             game_apply_upgrade(game.selectedUpgrade);
         }
         break;
+
 
     case STATE_CUTSCENE:
         ui_draw_cutscene();

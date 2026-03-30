@@ -3,11 +3,12 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <string.h>
 
 // ---------------------------------------------------------------------------
 // Fast PRNG (xorshift32) — much faster than rand() on ARM
 // ---------------------------------------------------------------------------
-static uint32_t _rng_state = 1;
+extern uint32_t _rng_state;
 
 static inline void rng_seed(uint32_t seed) {
     _rng_state = seed ? seed : 1;
@@ -56,6 +57,17 @@ static inline float minf(float a, float b) { return a < b ? a : b; }
 static inline float maxf(float a, float b) { return a > b ? a : b; }
 static inline int mini(int a, int b) { return a < b ? a : b; }
 static inline int maxi(int a, int b) { return a > b ? a : b; }
+
+// Fast inverse square root (Quake III style, ~1% error after Newton step)
+static inline float fast_inv_sqrt(float x) {
+    float xhalf = 0.5f * x;
+    int i;
+    memcpy(&i, &x, sizeof(i));
+    i = 0x5f3759df - (i >> 1);
+    memcpy(&x, &i, sizeof(x));
+    x = x * (1.5f - xhalf * x * x);
+    return x;
+}
 
 // Float-precision PI to avoid double-promotion warnings
 #define PI_F 3.14159265f

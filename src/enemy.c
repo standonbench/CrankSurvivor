@@ -50,13 +50,34 @@ void enemy_update_all(void)
                 moveX += (rng_float() - 0.5f) * 0.8f;
                 moveY += (rng_float() - 0.5f) * 0.8f;
             }
+            // Pack acceleration: 3+ creepers nearby = +20% speed
+            if (game.frameCount % 6 == 0) {
+                int packNear[8];
+                int packCount = collision_query_point(e->x, e->y, 60.0f, packNear, 8);
+                int creeperNear = 0;
+                for (int k = 0; k < packCount; k++) {
+                    if (packNear[k] != i && enemies[packNear[k]].alive &&
+                        enemies[packNear[k]].type == ENEMY_CREEPER)
+                        creeperNear++;
+                }
+                e->packBoost = (creeperNear >= 2) ? 1.2f : 1.0f;
+            }
+            moveX *= e->packBoost;
+            moveY *= e->packBoost;
             break;
 
         case ENEMY_TENDRIL:
         {
-            float wobble = sinf(game.gameTime * 0.1f + e->phase) * 0.5f;
-            moveX += (-dy) * wobble;
-            moveY += dx * wobble;
+            // Dart-and-pause: 30 frames fast lateral, 20 frames hovering
+            int cycle = (game.frameCount + (int)(e->phase * 10)) % 50;
+            if (cycle < 30) {
+                float wobble = sinf(game.gameTime * 0.15f + e->phase) * 0.7f;
+                moveX += (-dy) * wobble;
+                moveY += dx * wobble;
+            } else {
+                moveX *= 0.2f;
+                moveY *= 0.2f;
+            }
             break;
         }
 
@@ -68,12 +89,19 @@ void enemy_update_all(void)
         case ENEMY_ABYSSAL:
             e->lungeTimer++;
             if (e->lunging > 0) {
+                // Lunging: 5 frames at 2.5x speed
                 e->lunging--;
-                moveX *= 2.0f;
-                moveY *= 2.0f;
+                moveX *= 2.5f;
+                moveY *= 2.5f;
             } else if (e->lungeTimer >= 90 && dist < 75.0f) {
-                e->lungeTimer = 0;
-                e->lunging = 3;
+                // Telegraph + initiate lunge
+                e->lungeTimer = -30; // negative = recovery period
+                e->lunging = 5;
+                e->flashTimer = 15; // visual telegraph
+            } else if (e->lungeTimer < 0) {
+                // Recovery: slowed 50%
+                moveX *= 0.5f;
+                moveY *= 0.5f;
             }
             break;
 
@@ -96,10 +124,19 @@ void enemy_update_all(void)
             break;
 
         case ENEMY_BLOAT:
-            if (dist < 90.0f && (e->bobTimer / 4) % 2 == 0) {
+        {
+            // Swelling: below 50% HP = faster movement
+            float hpRatio = (e->maxHp > 0) ? e->hp / e->maxHp : 1.0f;
+            if (hpRatio < 0.5f) {
+                moveX *= 1.3f;
+                moveY *= 1.3f;
+            }
+            int pulseDiv = (hpRatio < 0.5f) ? 2 : 4;
+            if (dist < 90.0f && (e->bobTimer / pulseDiv) % 2 == 0) {
                 e->flashTimer = 1;
             }
             break;
+        }
 
         case ENEMY_HARBINGER:
             if (dist < 90.0f) {
@@ -109,14 +146,26 @@ void enemy_update_all(void)
                 moveX = (-dy) * e->speed * 0.3f * e->slowFactor;
                 moveY = dx * e->speed * 0.3f * e->slowFactor;
             }
-            // Buff aura every 4th frame
+            // Buff aura every 4th frame (use grid)
             if (game.frameCount % 4 == 0) {
-                for (int j = 0; j < enemyCount; j++) {
+                int buffNear[16];
+                int buffCount = collision_query_point(e->x, e->y, 90.0f, buffNear, 16);
+                for (int k = 0; k < buffCount; k++) {
+                    int j = buffNear[k];
                     if (j == i || !enemies[j].alive) continue;
-                    if (dist_sq(e->x, e->y, enemies[j].x, enemies[j].y) < 8100.0f) {
-                        if (enemies[j].slowFactor < 1.4f) enemies[j].slowFactor = 1.4f;
-                        if (enemies[j].slowTimer < 4) enemies[j].slowTimer = 4;
-                    }
+                    if (enemies[j].slowFactor < 1.4f) enemies[j].slowFactor = 1.4f;
+                    if (enemies[j].slowTimer < 4) enemies[j].slowTimer = 4;
+                }
+            }
+            // Summon a creeper every 4 seconds if player is near
+            if (game.frameCount % 120 == 0 && dist < 200.0f && enemyCount < MAX_ENEMIES - 2) {
+                float sx = e->x + rng_range(-15, 15);
+                float sy = e->y + rng_range(-15, 15);
+                int ci = entities_spawn_enemy(sx, sy, e->speed * 2.0f, ENEMY_CREEPER);
+                if (ci >= 0) {
+                    enemies[ci].hp = e->hp * 0.3f;
+                    enemies[ci].maxHp = enemies[ci].hp;
+                    enemies[ci].packBoost = 1.0f;
                 }
             }
             break;
@@ -165,9 +214,8 @@ void enemy_update_all(void)
             float pdy = e->y - player.y;
             if (pdx * pdx + pdy * pdy < 1296.0f) {
                 player_take_damage();
-                if (player.barnacleArmor) {
-                    enemy_damage(i, 1.0f);
-                }
+                // Salt Ward: absorb hit with shield
+                // (actual absorption handled in player_take_damage)
             }
         }
     }

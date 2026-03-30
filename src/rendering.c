@@ -20,7 +20,10 @@ static void build_tile_grid(void)
             } else if (tx == 1 || tx == GRID_W - 2 || ty == 1 || ty == GRID_H - 2) {
                 tileGrid[ty][tx] = 5;
             } else {
-                tileGrid[ty][tx] = rng_range(0, 3);
+                int r = rng_range(0, 100);
+                if (r < 60) tileGrid[ty][tx] = rng_range(0, 3);
+                else if (r < 85) tileGrid[ty][tx] = 6;
+                else tileGrid[ty][tx] = 7;
             }
         }
     }
@@ -92,11 +95,30 @@ void rendering_draw_playing(void)
         int sx = (int)a->x - cx;
         int sy = (int)a->y - cy;
         LCDBitmap* aImg = images_get_anchor();
-        if (aImg) pd->graphics->drawBitmap(aImg, sx - 6, sy - 6, kBitmapUnflipped);
-        // Pulsing damage radius indicator
-        float pulse = sinf((float)game.frameCount * 0.15f + a->x) * 3.0f;
-        int pr = 14 + (int)pulse;
-        GFX_CIRCLE(sx - pr, sy - pr, pr * 2, pr * 2, 1, kColorWhite);
+        int ax = sx - 6;
+        int ay = sy - 6;
+        
+        // Drop animation: Slide down from above for the first 10 frames
+        int elapsed = a->durationFrames - a->lifeFrames;
+        if (elapsed < 10) {
+            ay -= (10 - elapsed) * 4;
+            // Dithered shadow on the ground
+            LCDBitmap* sImg = images_get_drop_shadow();
+            if (sImg) {
+                pd->graphics->setDrawMode(kDrawModeFillBlack);
+                pd->graphics->drawBitmap(sImg, sx - 4, sy + 2, kBitmapUnflipped);
+                pd->graphics->setDrawMode(kDrawModeCopy);
+            }
+        }
+        
+        if (aImg) pd->graphics->drawBitmap(aImg, ax, ay, kBitmapUnflipped);
+        
+        // Pulsing indicator (using a simple XOR square pulse to save on circle math)
+        if ((game.frameCount + i * 7) % 20 < 10) {
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            GFX_RECT(sx - 15, sy - 15, 30, 30, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeCopy);
+        }
     }
 
     // Crates
@@ -116,14 +138,14 @@ void rendering_draw_playing(void)
         int sx = (int)r->x - cx;
         int sy = (int)r->y - cy;
         if (sx < -80 || sx > SCREEN_W + 80 || sy < -80 || sy > SCREEN_H + 80) continue;
-        int ri = (int)r->pullRadius;
-        // Rotating spiral arcs
+        
+        // Rotating dithered spiral mask (XOR for high visibility)
         pd->graphics->setDrawMode(kDrawModeXOR);
-        int phase = (game.frameCount * 8) % 360;
-        pd->graphics->drawEllipse(sx - ri, sy - ri, ri * 2, ri * 2, 1, phase, phase + 180, kColorWhite);
-        pd->graphics->drawEllipse(sx - ri, sy - ri, ri * 2, ri * 2, 1, phase + 180, phase + 360, kColorWhite);
-        int ri2 = ri * 2 / 3;
-        pd->graphics->drawEllipse(sx - ri2, sy - ri2, ri2 * 2, ri2 * 2, 1, phase + 90, phase + 270, kColorWhite);
+        LCDBitmap* vImg = images_get_vortex_mask();
+        if (vImg) {
+            LCDBitmapFlip flip = (game.frameCount % 2 == 0) ? kBitmapFlippedX : kBitmapUnflipped;
+            pd->graphics->drawBitmap(vImg, sx - 24, sy - 24, flip);
+        }
         pd->graphics->setDrawMode(kDrawModeCopy);
     }
 
@@ -136,20 +158,32 @@ void rendering_draw_playing(void)
         if (sx < -60 || sx > SCREEN_W + 60 || sy < -60 || sy > SCREEN_H + 60) continue;
 
         if (!dc->detonated) {
-            // Draw mine sprite
-            LCDBitmap* dcImg = images_get_depth_charge();
-            if (dcImg) pd->graphics->drawBitmap(dcImg, sx - 4, sy - 4, kBitmapUnflipped);
-            // Warning ring pulses (3 pulses during 1s fuse)
-            int pulse = (dc->fuseFrames * 3 / 30) % 2;
-            if (pulse == 0) {
-                int wr = (int)(dc->blastRadius * 0.5f);
+            // Draw mine sprite (blink rapidly near end)
+            int blink = (dc->fuseFrames < 10 && (dc->fuseFrames % 2 == 0));
+            if (!blink) {
+                LCDBitmap* dcImg = images_get_depth_charge();
+                if (dcImg) pd->graphics->drawBitmap(dcImg, sx - 4, sy - 4, kBitmapUnflipped);
+            }
+            // Warning ring pulses outward
+            int maxP = 10;
+            int pFrame = (30 - dc->fuseFrames) % maxP;
+            float rFrac = (float)pFrame / (float)maxP;
+            int wr = (int)(dc->blastRadius * rFrac);
+            if (wr > 2) {
+                pd->graphics->setDrawMode(kDrawModeXOR);
                 GFX_CIRCLE(sx - wr, sy - wr, wr * 2, wr * 2, 1, kColorWhite);
+                pd->graphics->setDrawMode(kDrawModeCopy);
             }
         } else {
-            // Slow field: dithered circle
+            // Slow field: dithered circle border
             int ri = (int)(dc->blastRadius * 0.8f);
             pd->graphics->setDrawMode(kDrawModeXOR);
             GFX_CIRCLE(sx - ri, sy - ri, ri * 2, ri * 2, 1, kColorWhite);
+            
+            // Inward flowing rings for the pull/slow effect
+            int wave = ri - ((game.frameCount * 2) % ri);
+            if (wave > 0) GFX_CIRCLE(sx - wave, sy - wave, wave * 2, wave * 2, 1, kColorWhite);
+            
             pd->graphics->setDrawMode(kDrawModeCopy);
         }
     }
@@ -230,9 +264,9 @@ void rendering_draw_playing(void)
         }
         if (tpIdx >= 0 && !player.dead) {
             int lv = player.weapons[tpIdx].level;
-            int orbCount[] = { 2, 3, 4 };
-            float radius[] = { 45.0f, 60.0f, 68.0f };
-            float speed[] = { 0.08f, 0.10f, 0.14f };
+            int orbCount[] = { 2, 3, 3 };
+            float radius[] = { 40.0f, 52.0f, 60.0f };
+            float speed[] = { 0.08f, 0.10f, 0.12f };
             int li = lv - 1;
             float twoPi = 2.0f * 3.14159265f;
 
@@ -241,9 +275,14 @@ void rendering_draw_playing(void)
                 float a = game.tidePoolAngle + o * (twoPi / orbCount[li]);
                 float ox = player.x + cosf(a) * radius[li];
                 float oy = player.y + sinf(a) * radius[li];
+                
+                // Buoyant vertical bobbing (aesthetic trick)
+                float bob = sinf((float)game.frameCount * 0.15f + o) * 3.0f;
+                
                 int osx = (int)ox - cx;
-                int osy = (int)oy - cy;
-                GFX_ELLIPSE(osx - 8, osy - 8, 16, 16, kColorWhite);
+                int osy = (int)oy - cy + (int)bob;
+                
+                GFX_FILL(osx - 2, osy - 2, 4, 4, kColorWhite);
             }
             pd->graphics->setDrawMode(kDrawModeCopy);
         }
@@ -262,6 +301,14 @@ void rendering_draw_playing(void)
             LCDBitmap* pImg = images_get_player_frame(player.frameIdx);
             if (pImg) pd->graphics->drawBitmap(pImg, px - 15, py - 15, kBitmapUnflipped);
         }
+        // Salt Ward shield pips above player
+        if (player.saltWardShield > 0) {
+            int totalW = player.saltWardShield * 6 - 2;
+            int startX = px - totalW / 2;
+            for (int s = 0; s < player.saltWardShield; s++) {
+                GFX_FILL(startX + s * 6, py - 22, 4, 4, kColorWhite);
+            }
+        }
     }
 
     // Bullets
@@ -272,34 +319,55 @@ void rendering_draw_playing(void)
         int sy = (int)b->y - cy;
         if (sx < -10 || sx > SCREEN_W + 10 || sy < -10 || sy > SCREEN_H + 10) continue;
         LCDBitmap* bImg;
-        if (b->imageId == 1) bImg = images_get_harpoon();
-        else if (b->imageId == 2) bImg = images_get_ghost_light();
-        else bImg = images_get_bullet();
-        if (bImg) pd->graphics->drawBitmap(bImg, sx - 3, sy - 3, kBitmapUnflipped);
-    }
-
-    // Bullet trails (3 dots, size gradient)
-    for (int i = 0; i < bulletCount; i++) {
-        Bullet* b = &bullets[i];
-        if (!b->alive) continue;
-        float vlen = sqrtf(b->vx * b->vx + b->vy * b->vy);
-        if (vlen > 0.0f) {
-            float nx = -b->vx / vlen;
-            float ny = -b->vy / vlen;
-            int t1x = (int)(b->x + nx * 5.0f) - cx;
-            int t1y = (int)(b->y + ny * 5.0f) - cy;
-            GFX_FILL(t1x, t1y, 3, 3, kColorWhite);
-            int t2x = (int)(b->x + nx * 9.0f) - cx;
-            int t2y = (int)(b->y + ny * 9.0f) - cy;
-            GFX_FILL(t2x, t2y, 2, 2, kColorWhite);
-            int t3x = (int)(b->x + nx * 14.0f) - cx;
-            int t3y = (int)(b->y + ny * 14.0f) - cy;
-            GFX_FILL(t3x, t3y, 2, 2, kColorWhite);
+        if (b->imageId == 1) {
+            bImg = images_get_harpoon();
+            // Harpoon "Rope" effect (jagged line toward player)
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            int px = (int)player.x - cx;
+            int py = (int)player.y - cy;
+            // Draw a slightly jagged rope
+            int mx = (sx + px) / 2 + rng_range(-2, 2);
+            int my = (sy + py) / 2 + rng_range(-2, 2);
+            pd->graphics->drawLine(sx, sy, mx, my, 1, kColorWhite);
+            pd->graphics->drawLine(mx, my, px, py, 1, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeCopy);
+        }
+        else if (b->imageId == 2) {
+            bImg = images_get_wisp_sprite();
+            // Ghost Light special: XOR flicker offset
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            if (game.frameCount % 2 == 0) sx += 1;
+        }
+        else {
+            bImg = images_get_bullet();
+            if (rng_range(0, 100) < 30) sx += rng_range(-1, 1);
+        }
+        
+        if (bImg) {
+            pd->graphics->drawBitmap(bImg, sx - 6, sy - 2, kBitmapUnflipped);
+            pd->graphics->setDrawMode(kDrawModeCopy);
         }
     }
 
-    // Chain lightning arcs
+    // Bullet trails (Optimized: 2 dots instead of 3, XOR mode for visibility)
     pd->graphics->setDrawMode(kDrawModeXOR);
+    for (int i = 0; i < bulletCount; i++) {
+        Bullet* b = &bullets[i];
+        if (!b->alive) continue;
+        float vlen_sq = b->vx * b->vx + b->vy * b->vy;
+        if (vlen_sq > 1.0f) {
+            float vlen = sqrtf(vlen_sq);
+            float nx = -b->vx / vlen;
+            float ny = -b->vy / vlen;
+            GFX_FILL((int)(b->x + nx * 6.0f) - cx, (int)(b->y + ny * 6.0f) - cy, 2, 2, kColorWhite);
+            GFX_FILL((int)(b->x + nx * 11.0f) - cx, (int)(b->y + ny * 11.0f) - cy, 1, 1, kColorWhite);
+        }
+    }
+    pd->graphics->setDrawMode(kDrawModeCopy);
+
+    // Chain lightning arcs (Optimized: 2 jagged segments + XOR spark)
+    pd->graphics->setDrawMode(kDrawModeXOR);
+    LCDBitmap* bSpr = images_get_bolt_sprite();
     for (int i = 0; i < MAX_CHAIN_VISUALS; i++) {
         ChainVisual* cv = &chainVisuals[i];
         if (cv->life <= 0) continue;
@@ -307,7 +375,17 @@ void rendering_draw_playing(void)
         int y1 = (int)cv->y1 - cy;
         int x2 = (int)cv->x2 - cx;
         int y2 = (int)cv->y2 - cy;
-        pd->graphics->drawLine(x1, y1, x2, y2, 2, kColorWhite);
+        
+        // Single midpoint jitter instead of two
+        int mx = (x1 + x2) / 2 + rng_range(-6, 6);
+        int my = (y1 + y2) / 2 + rng_range(-6, 6);
+        
+        pd->graphics->drawLine(x1, y1, mx, my, 2, kColorWhite);
+        pd->graphics->drawLine(mx, my, x2, y2, 2, kColorWhite);
+        
+        // Draw spark sprite at destination
+        if (bSpr) pd->graphics->drawBitmap(bSpr, x2 - 8, y2 - 4, kBitmapUnflipped);
+        
         cv->life--;
     }
     pd->graphics->setDrawMode(kDrawModeCopy);
@@ -322,46 +400,42 @@ void rendering_draw_playing(void)
         if (ebImg) pd->graphics->drawBitmap(ebImg, sx - 5, sy - 5, kBitmapUnflipped);
     }
 
-    // Brine Splash visual (expanding ring)
+    // Brine Splash visual (Churning dithered pool)
     if (game.brineSplash.active) {
         game.brineSplash.frame++;
         int t = game.brineSplash.frame;
-        float r = game.brineSplash.radius +
-                  (game.brineSplash.maxRadius - 15.0f) * ((float)t / 4.0f);
-        int ri = (int)r;
         int bsx = (int)game.brineSplash.x - cx;
         int bsy = (int)game.brineSplash.y - cy;
-        pd->graphics->setDrawMode(kDrawModeXOR);
-        GFX_CIRCLE(bsx - ri, bsy - ri, ri * 2, ri * 2, 2, kColorWhite);
-        // Inner dithered ring for visual weight
-        if (t > 1) {
-            int ri2 = (int)(r * 0.6f);
-            GFX_CIRCLE(bsx - ri2, bsy - ri2, ri2 * 2, ri2 * 2, 1, kColorWhite);
+        
+        LCDBitmap* poolImg = images_get_vortex_mask();
+        if (poolImg) {
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            LCDBitmapFlip flip = (game.frameCount % 2 == 0) ? kBitmapFlippedX : kBitmapUnflipped;
+            pd->graphics->drawBitmap(poolImg, bsx - 24, bsy - 24, flip);
+            pd->graphics->setDrawMode(kDrawModeCopy);
         }
-        pd->graphics->setDrawMode(kDrawModeCopy);
+        
         if (t >= 4) game.brineSplash.active = 0;
     }
 
-    // Foghorn visual (expanding double ring)
+    // Foghorn visual (expanding spectral ripple)
     if (game.foghornVisual.active) {
         game.foghornVisual.frame++;
         int t = game.foghornVisual.frame;
-        float r = game.foghornVisual.radius +
-                  (game.foghornVisual.maxRadius - 15.0f) * ((float)t / 6.0f);
-        int ri = (int)r;
         int fsx = (int)game.foghornVisual.x - cx;
         int fsy = (int)game.foghornVisual.y - cy;
-        pd->graphics->setDrawMode(kDrawModeFillWhite);
-        GFX_CIRCLE(fsx - ri, fsy - ri, ri * 2, ri * 2, 2, kColorWhite);
-        if (t > 1) {
-            int ri2 = (int)(r * 0.6f);
-            GFX_CIRCLE(fsx - ri2, fsy - ri2, ri2 * 2, ri2 * 2, 1, kColorWhite);
+        
+        LCDBitmap* ripImg = images_get_ripple_mask();
+        if (ripImg) {
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            // Construct a full ripple from 4 mirrored dithered quadrants
+            pd->graphics->drawBitmap(ripImg, fsx - 16, fsy - 16, kBitmapUnflipped);
+            pd->graphics->drawBitmap(ripImg, fsx, fsy - 16, kBitmapFlippedX);
+            pd->graphics->drawBitmap(ripImg, fsx - 16, fsy, kBitmapFlippedY);
+            pd->graphics->drawBitmap(ripImg, fsx, fsy, (LCDBitmapFlip)(kBitmapFlippedX | kBitmapFlippedY));
+            pd->graphics->setDrawMode(kDrawModeCopy);
         }
-        if (t > 2) {
-            int ri3 = (int)(r * 0.4f);
-            GFX_CIRCLE(fsx - ri3, fsy - ri3, ri3 * 2, ri3 * 2, 1, kColorWhite);
-        }
-        pd->graphics->setDrawMode(kDrawModeCopy);
+        
         if (t >= 6) game.foghornVisual.active = 0;
     }
 
@@ -388,8 +462,30 @@ void rendering_draw_playing(void)
         }
         int sx = (int)fx->x - cx;
         int sy = (int)fx->y - cy;
-        int rad = 6 + fx->frameIdx * 3;
-        GFX_CIRCLE(sx - rad, sy - rad, rad * 2, rad * 2, 1, kColorWhite);
+        
+        if (fx->fxType == 1) {
+            // Impact spark / muzzle flash (expanding star)
+            int ext = 4 + fx->frameIdx * 3;
+            int gap = fx->frameIdx * 4;
+            // Diagonal lines
+            pd->graphics->drawLine(sx - ext, sy - ext, sx - gap, sy - gap, 1, kColorWhite);
+            pd->graphics->drawLine(sx + gap, sy + gap, sx + ext, sy + ext, 1, kColorWhite);
+            pd->graphics->drawLine(sx + ext, sy - ext, sx + gap, sy - gap, 1, kColorWhite);
+            pd->graphics->drawLine(sx - gap, sy + gap, sx - ext, sy + ext, 1, kColorWhite);
+            // Orthogonal lines (only visible in early frames)
+            if (fx->frameIdx < 2) {
+                pd->graphics->drawLine(sx - ext, sy, sx - gap, sy, 1, kColorWhite);
+                pd->graphics->drawLine(sx + gap, sy, sx + ext, sy, 1, kColorWhite);
+                pd->graphics->drawLine(sx, sy - ext, sx, sy - gap, 1, kColorWhite);
+                pd->graphics->drawLine(sx, sy + gap, sx, sy + ext, 1, kColorWhite);
+            }
+        } else {
+            // Death burst ring or generic pulse (fxType 0)
+            int rad = 6 + fx->frameIdx * 3;
+            pd->graphics->setDrawMode(kDrawModeXOR);
+            GFX_CIRCLE(sx - rad, sy - rad, rad * 2, rad * 2, 1, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeCopy);
+        }
     }
 
     // Damage numbers (floating combat text)
@@ -411,13 +507,15 @@ void rendering_draw_playing(void)
                 snprintf(buf, sizeof(buf), "%d!", dn->value);
             else
                 snprintf(buf, sizeof(buf), "%d", dn->value);
-            // Outline for readability (draw black at 4 offsets)
+            // Thicker shadow for readability (draw black at all 8 directions)
             size_t slen = strlen(buf);
             pd->graphics->setDrawMode(kDrawModeFillBlack);
-            pd->graphics->drawText(buf, slen, kASCIIEncoding, dx - 1, dy);
-            pd->graphics->drawText(buf, slen, kASCIIEncoding, dx + 1, dy);
-            pd->graphics->drawText(buf, slen, kASCIIEncoding, dx, dy - 1);
-            pd->graphics->drawText(buf, slen, kASCIIEncoding, dx, dy + 1);
+            for(int ox=-1; ox<=1; ox++) {
+                for(int oy=-1; oy<=1; oy++) {
+                    if(ox==0 && oy==0) continue;
+                    pd->graphics->drawText(buf, slen, kASCIIEncoding, dx + ox, dy + oy);
+                }
+            }
             pd->graphics->setDrawMode(kDrawModeFillWhite);
             pd->graphics->drawText(buf, slen, kASCIIEncoding, dx, dy);
             dn->y -= 2.25f;
@@ -495,6 +593,15 @@ void rendering_draw_playing(void)
     // HUD + announcements (screen space)
     ui_draw_hud();
     ui_draw_tier_announcement();
+    ui_draw_crate_reward();
+
+    // Vignette (Lantern light) overlay
+    LCDBitmap* vImg = images_get_vignette();
+    if (vImg) {
+        pd->graphics->setDrawMode(kDrawModeFillBlack);
+        pd->graphics->drawBitmap(vImg, 0, 0, kBitmapUnflipped);
+        pd->graphics->setDrawMode(kDrawModeCopy);
+    }
 }
 
 void rendering_spawn_dmg_number(float x, float y, int value, int crit)

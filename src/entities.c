@@ -179,11 +179,11 @@ int entities_spawn_pickup(float x, float y)
     // Roll pickup type
     int roll = rng_range(1, 100);
     PickupType type;
-    if (roll <= 35) {
+    if (roll <= 15) {
         type = PICKUP_WEAPON_UPGRADE;
-    } else if (roll <= 55) {
+    } else if (roll <= 30) {
         type = PICKUP_NEW_WEAPON;
-    } else if (roll <= 80) {
+    } else if (roll <= 70) {
         type = PICKUP_HEALTH;
     } else {
         type = PICKUP_XP_BURST;

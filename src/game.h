@@ -48,20 +48,20 @@ extern PlaydateAPI* pd;
 #define FRAME_MS           33    // ~30fps
 #define MAX_WEAPONS         6
 #define VICTORY_TIME      480.0f // 8 minutes
-#define XP_LEVEL_SCALE     1.45f
+#define XP_LEVEL_SCALE     1.35f
 
 // ---------------------------------------------------------------------------
 // Entity pool sizes
 // ---------------------------------------------------------------------------
-#define MAX_ENEMIES       150
+#define MAX_ENEMIES       100
 #define MAX_BULLETS        60
 #define MAX_ENEMY_BULLETS  30
 #define MAX_XP_GEMS       120
 #define MAX_ANCHORS         8
-#define MAX_PARTICLES      100
+#define MAX_PARTICLES       60
 #define MAX_FX              20
-#define MAX_CRATES           1
-#define MAX_PICKUPS          8
+#define MAX_CRATES           2
+#define MAX_PICKUPS         12
 #define MAX_RIPTIDES         4
 #define MAX_DEPTH_CHARGES    6
 #define MAX_CHAIN_VISUALS    8
@@ -143,6 +143,8 @@ typedef struct {
     int8_t stunTimer;
     float slowFactor;
     float phase;
+    float maxHp;       // initial HP for ratio checks (Bloat swell)
+    float packBoost;   // Creeper pack acceleration multiplier
     int16_t shotCooldown;
     int16_t bobTimer;
     int16_t animFrame;
@@ -254,6 +256,7 @@ typedef struct {
     int8_t life;
 } ChainVisual;
 
+
 typedef struct {
     float x, y;
     float vx, vy;
@@ -310,13 +313,18 @@ typedef struct {
     // Passives
     int oilskinCoat;
     int seaLegs;
-    int barnacleArmor;    // bool
+    int saltWardMax;      // max shield points (0 = not owned)
+    int saltWardShield;   // current shield HP
+    int saltWardRegenCD;  // frames until regen starts
     int lighthouseLens;   // bool
     int tidecaller;
 
     // Weapons
     Weapon weapons[MAX_WEAPONS];
     int weaponCount;
+
+    float beamAngle;
+    int beamActive;
 } Player;
 
 // ---------------------------------------------------------------------------
@@ -475,8 +483,10 @@ typedef struct {
     // Slow-motion timer (crate drama)
     int slowMotionTimer;
 
+
     // Bold font for UI
     LCDFont* fontBold;
+    LCDFont* fontLarge;
 } Game;
 
 extern Game game;
@@ -536,6 +546,7 @@ void game_collect_crate(void);
 void game_death_cutscene(void);
 void game_update_pickups(void);
 void game_collect_pickup(int idx);
+void victory_cutscene_complete(void);
 
 // entities.c
 void entities_init(void);
@@ -563,6 +574,7 @@ void enemy_damage(int idx, float amount);
 // weapons.c
 void weapons_fire_all(void);
 void weapons_update_tide_pool(void);
+void weapons_update_brine_splash(void);
 void weapons_update_anchors(void);
 const char* weapon_get_name(WeaponId id);
 const char* weapon_get_desc(WeaponId id, int level);
@@ -621,9 +633,18 @@ LCDBitmap* images_get_tile(int tileIdx);
 LCDBitmap* images_get_weapon_icon(WeaponId id);
 LCDBitmap* images_get_weapon_icon_large(WeaponId id);
 LCDBitmap* images_get_passive_icon(int passiveIdx);
+LCDBitmap* images_get_passive_icon_large(int passiveIdx);
 LCDBitmap* images_get_pickup(PickupType type);
 LCDBitmap* images_get_chain_bolt(void);
 LCDBitmap* images_get_depth_charge(void);
+LCDBitmap* images_get_lantern(void);
+LCDBitmap* images_get_swirling_pool(void);
+LCDBitmap* images_get_vortex_mask(void);
+LCDBitmap* images_get_ripple_mask(void);
+LCDBitmap* images_get_bolt_sprite(void);
+LCDBitmap* images_get_wisp_sprite(void);
+LCDBitmap* images_get_drop_shadow(void);
+LCDBitmap* images_get_vignette(void);
 int images_get_enemy_half_w(EnemyType type);
 int images_get_enemy_half_h(EnemyType type);
 

@@ -70,6 +70,7 @@ void player_update(void)
     }
 
     // Auto-aim: cache nearest enemy every 3 frames
+    // Auto-aim: cache nearest enemy every 3 frames
     if (game.frameCount - game.targetCacheFrame >= 3) {
         game.cachedTargetIdx = -1;
         float nearDist = 1e18f;
@@ -110,11 +111,29 @@ void player_take_damage(void)
     uint32_t now = pd->system->getCurrentTimeMilliseconds();
     if (now < player.invulnUntil) return;
 
+    // Salt Ward: absorb hit with shield
+    if (player.saltWardShield > 0) {
+        player.saltWardShield--;
+        player.saltWardRegenCD = 150; // 5s cooldown before regen
+        player.invulnUntil = now + (INVULN_FRAMES * FRAME_MS);
+        game_trigger_shake(1);
+        sound_play_hit();
+        game.invertTimer = 2;
+        entities_spawn_fx(player.x, player.y, 1, 1);
+        return; // no HP damage
+    }
+
     int dmg = player.cursedTimer > 0 ? 2 : 1;
     player.hp -= dmg;
     player.invulnUntil = now + (INVULN_FRAMES * FRAME_MS);
     game_trigger_shake(2);
     sound_play_hit();
+    game.invertTimer = 3; // hit feedback flash
+
+    // Low HP warning: slow-mo when dropping to 1 HP
+    if (player.hp == 1) {
+        game.slowMotionTimer = 6;
+    }
 
     if (player.hp <= 0) {
         player.dead = 1;

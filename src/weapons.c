@@ -5,29 +5,29 @@
 // Weapon stat tables
 // ---------------------------------------------------------------------------
 static const int cooldownTable[WEAPON_COUNT][3] = {
-    { 700,  450,  250  }, // Signal Beam
+    { 700,  500,  350  }, // Signal Beam (was 450/250)
     {   0,    0,    0  }, // Tide Pool (always active)
-    { 1800, 1400, 800  }, // Harpoon
-    { 2800, 2200, 1400 }, // Brine Splash
-    { 1800, 1100, 600  }, // Ghost Light
-    { 4000, 2800, 1800 }, // Anchor Drop
-    { 7000, 4500, 2800 }, // Foghorn
-    { 1200,  900,  600 }, // Chain Lightning
+    { 1800, 1400, 1000 }, // Harpoon (was 800)
+    {    0,    0,    0  }, // Brine Splash (always active)
+    { 1500,  900,  600 }, // Ghost Light (was 1800/1100)
+    { 3000, 2200, 1500 }, // Anchor Drop (was 4000/2800/1800)
+    { 6000, 4500, 2800 }, // Foghorn (was 7000)
+    { 1200,  900,  700 }, // Chain Lightning (was 600)
     { 3000, 2400, 1800 }, // Riptide
-    { 2500, 2000, 1500 }, // Depth Charge
+    { 2500, 2000, 1800 }, // Depth Charge (was 1500)
 };
 
 static const char* descTable[WEAPON_COUNT][3] = {
-    { "Single shot",         "3-bullet fan",    "5-bullet pierce"   },
-    { "2 tidal orbs",        "3 orbs, wider",   "4 orbs, 2 dmg"    },
-    { "Heavy pierce, 3 dmg", "5 dmg, faster",   "8 dmg, double"    },
-    { "AoE ring, 1 dmg",     "Wider, 2 dmg",    "Huge, 3 dmg+slow" },
-    { "Homing wisp",         "2 dmg, sharper",   "2 wisps, retarget"},
-    { "Ground hazard, 1 dmg","2 dmg, longer",    "3 dmg + slow"    },
+    { "Single shot",         "3-bullet fan",    "4-bullet pierce"   },
+    { "2 tidal orbs",        "3 orbs, wider",   "3 orbs, 1.5 dmg"  },
+    { "Heavy pierce, 3 dmg", "4 dmg, faster",   "6 dmg, double"    },
+    { "Aura ring, 0.5/s",   "Wider, 1 dmg/s",  "Large, 2/s+slow"  },
+    { "Homing wisp, 1.5",   "2 wisps, 2 dmg",   "3 wisps, retarget"},
+    { "Ground trap, 1.5",   "2.5 dmg, longer",  "4 dmg + slow"    },
     { "Push + 1 dmg",        "Wider, 2 dmg",     "Huge, 3 dmg+stun"},
-    { "Chain 2, 1 dmg",      "Chain 4, 2 dmg",   "Chain 6+stun"    },
-    { "Pull vortex, 1 dmg",  "Wider, 2 dmg",     "2 vortexes, 1.5x"},
-    { "Mine, 3 dmg",         "2 mines, 4 dmg",   "3 mines+slow"    },
+    { "Chain 2, 1 dmg",      "Chain 3, 1.5 dmg", "Chain 5+stun"    },
+    { "Pull vortex, 1 dmg",  "Wider, 1.5 dmg",  "2 vortexes, 1.3x"},
+    { "Mine, 2 dmg",         "2 mines, 3 dmg",   "2 mines+slow"    },
 };
 
 const char* weapon_get_name(WeaponId id)
@@ -37,6 +37,7 @@ const char* weapon_get_name(WeaponId id)
         "Holy Burst", "Spirit Wisp", "Binding Rune", "Banishing Cry",
         "Chain Bolt", "Undertow", "Abyssal Mine"
     };
+    if (id < 0 || id >= WEAPON_COUNT) return "Unknown";
     return names[id];
 }
 
@@ -71,12 +72,12 @@ void weapons_calc_synergies(void)
     game.synergyBeamDmg = (hasWeapon[WEAPON_HARPOON] && hasWeapon[WEAPON_SIGNAL_BEAM]) ? 1.0f : 0.0f;
     // Supernatural Control: Ghost Light + Anchor → slow 20% stronger
     game.synergyRuneSlow = (hasWeapon[WEAPON_GHOST_LIGHT] && hasWeapon[WEAPON_ANCHOR_DROP]) ? 0.8f : 1.0f;
-    // Arsenal Power: Foghorn + 4+ weapons → cry cooldown -20%
-    game.synergyCryCooldown = (hasWeapon[WEAPON_FOGHORN] && player.weaponCount >= 4) ? 0.8f : 1.0f;
+    // Arsenal Power: Foghorn + 4+ weapons → cry cooldown -25%
+    game.synergyCryCooldown = (hasWeapon[WEAPON_FOGHORN] && player.weaponCount >= 4) ? 0.75f : 1.0f;
     // Static Charge: Chain Lightning + Tide Pool → orb chain chance
     game.synergyStaticCharge = (hasWeapon[WEAPON_CHAIN_LIGHTNING] && hasWeapon[WEAPON_TIDE_POOL]) ? 1.0f : 0.0f;
-    // Maelstrom: Riptide + Brine Splash → Brine +30% dmg in vortex
-    game.synergyMaelstrom = (hasWeapon[WEAPON_RIPTIDE] && hasWeapon[WEAPON_BRINE_SPLASH]) ? 1.3f : 1.0f;
+    // Maelstrom: Riptide + Brine Splash → Brine +20% dmg in vortex
+    game.synergyMaelstrom = (hasWeapon[WEAPON_RIPTIDE] && hasWeapon[WEAPON_BRINE_SPLASH]) ? 1.2f : 1.0f;
     // Depth Hunter: Depth Charge + Harpoon → harpoon kills drop mini-mines
     game.synergyDepthHunter = (hasWeapon[WEAPON_DEPTH_CHARGE] && hasWeapon[WEAPON_HARPOON]) ? 1.0f : 0.0f;
 }
@@ -93,10 +94,10 @@ void weapons_update_tide_pool(void)
     if (tpIdx < 0 || player.dead) return;
 
     int lv = player.weapons[tpIdx].level;
-    int orbCount[] = { 2, 3, 4 };
-    float radius[] = { 45.0f, 60.0f, 68.0f };
-    float dmg[] = { 1.0f, 1.0f, 2.0f };
-    float speed[] = { 0.08f, 0.10f, 0.14f };
+    int orbCount[] = { 2, 3, 3 };
+    float radius[] = { 40.0f, 52.0f, 60.0f };
+    float dmg[] = { 1.0f, 1.0f, 1.5f };
+    float speed[] = { 0.10f, 0.13f, 0.16f };
     int li = lv - 1;
 
     game.tidePoolAngle += speed[li];
@@ -115,21 +116,81 @@ void weapons_update_tide_pool(void)
             entities_spawn_particles(ox, oy, 1, 0);
         }
 
-        // Check enemy collisions (196 = 14px²)
-        for (int i = 0; i < enemyCount; i++) {
+        // Check enemy collisions via spatial grid
+        int nearby[64];
+        int nearCount = collision_query_point(ox, oy, 21.0f, nearby, 64);
+        for (int ni = 0; ni < nearCount; ni++) {
+            int i = nearby[ni];
             Enemy* e = &enemies[i];
-            if (!e->alive) continue;
             float edx = e->x - ox;
             float edy = e->y - oy;
             if (edx * edx + edy * edy < 441.0f) {
-                // Per-enemy hit cooldown: ~15 frames (500ms / 33ms)
                 if (game.frameCount - e->lastHitByTidepool >= 15) {
                     e->lastHitByTidepool = game.frameCount;
                     enemy_damage(i, dmg[li]);
-                    // Static Charge synergy: 10% chain on orb hit
-                    if (game.synergyStaticCharge > 0 && enemies[i].alive && rng_range(1, 100) <= 10) {
+                    // Static Charge synergy: 5% chain on orb hit
+                    if (game.synergyStaticCharge > 0 && enemies[i].alive && rng_range(1, 100) <= 5) {
                         weapons_fire_chain_at(e->x, e->y, 1.0f, 2, 0, i);
                     }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Brine Splash (Constant "Garlic" Aura)
+// ---------------------------------------------------------------------------
+void weapons_update_brine_splash(void)
+{
+    int bsIdx = -1;
+    for (int i = 0; i < player.weaponCount; i++) {
+        if (player.weapons[i].id == WEAPON_BRINE_SPLASH) { bsIdx = i; break; }
+    }
+    if (bsIdx < 0 || player.dead) {
+        game.brineSplash.active = 0;
+        return; 
+    }
+
+    int lv = player.weapons[bsIdx].level;
+    float radius[] = { 50.0f, 68.0f, 85.0f };
+    float dmg[] = { 0.5f, 1.0f, 2.0f };
+    float r = radius[lv - 1] * game.synergyBurstRadius;
+
+    // Visual ring stays permanently on the player
+    game.brineSplash.active = 1;
+    game.brineSplash.x = player.x;
+    game.brineSplash.y = player.y;
+    game.brineSplash.maxRadius = r;
+    game.brineSplash.radius = r + (sinf(game.frameCount * 0.1f) * 2.0f);
+
+    // Tick damage every 30 frames (1s) via spatial grid
+    if (game.frameCount % 30 == 0) {
+        int nearby[64];
+        int nearCount = collision_query_point(player.x, player.y, r, nearby, 64);
+        for (int ni = 0; ni < nearCount; ni++) {
+            int j = nearby[ni];
+            Enemy* e = &enemies[j];
+            float edx = e->x - player.x;
+            float edy = e->y - player.y;
+            if (edx * edx + edy * edy <= r * r) {
+                float bdmg = dmg[lv - 1];
+                // Maelstrom synergy
+                if (game.synergyMaelstrom > 1.0f) {
+                    for (int ri = 0; ri < riptideCount; ri++) {
+                        if (!riptides[ri].alive) continue;
+                        float rdx = e->x - riptides[ri].x;
+                        float rdy = e->y - riptides[ri].y;
+                        if (rdx * rdx + rdy * rdy < riptides[ri].pullRadius * riptides[ri].pullRadius) {
+                            bdmg *= game.synergyMaelstrom;
+                            break;
+                        }
+                    }
+                }
+                enemy_damage(j, bdmg);
+                if (lv >= 3 && enemies[j].alive) {
+                    enemies[j].slowTimer = 30;
+                    enemies[j].slowFactor = 0.5f;
                 }
             }
         }
@@ -152,18 +213,19 @@ void weapons_update_anchors(void)
             continue;
         }
 
-        // Damage enemies in range (324 = 18px²)
-        for (int i = 0; i < enemyCount; i++) {
+        // Damage enemies in range via spatial grid (27px radius)
+        int nearby[64];
+        int nearCount = collision_query_point(anch->x, anch->y, 27.0f, nearby, 64);
+        for (int ni = 0; ni < nearCount; ni++) {
+            int i = nearby[ni];
+            if (i >= MAX_ENEMIES) continue;
             Enemy* e = &enemies[i];
-            if (!e->alive) continue;
             float dx = e->x - anch->x;
             float dy = e->y - anch->y;
             if (dx * dx + dy * dy < 729.0f) {
-                // Per-enemy hit cooldown (~21 frames = 700ms)
                 if (anch->hitCooldowns[i] <= 0) {
                     anch->hitCooldowns[i] = 21;
                     enemy_damage(i, anch->dmg);
-                    // Apply slow if anchor has slow factor
                     if (anch->slowFactor < 1.0f && enemies[i].alive) {
                         enemies[i].slowTimer = 3;
                         enemies[i].slowFactor = anch->slowFactor;
@@ -172,9 +234,10 @@ void weapons_update_anchors(void)
             }
         }
 
-        // Tick down cooldowns (only active enemy slots)
-        for (int i = 0; i < enemyCount; i++) {
-            if (anch->hitCooldowns[i] > 0) anch->hitCooldowns[i]--;
+        // Tick down cooldowns for nearby enemies only
+        for (int ni = 0; ni < nearCount; ni++) {
+            int i = nearby[ni];
+            if (i < MAX_ENEMIES && anch->hitCooldowns[i] > 0) anch->hitCooldowns[i]--;
         }
     }
 
@@ -195,45 +258,51 @@ void weapons_update_anchors(void)
 // ---------------------------------------------------------------------------
 void weapons_fire_chain_at(float x, float y, float dmg, int chainsLeft, int stunChance, int sourceEnemy)
 {
-    if (chainsLeft <= 0) return;
+    float cx = x, cy = y;
+    int src = sourceEnemy;
 
-    // Find nearest enemy within 60px that isn't the source
-    float bestDist = 3600.0f; // 60px squared
-    int bestIdx = -1;
-    for (int i = 0; i < enemyCount; i++) {
-        if (i == sourceEnemy || !enemies[i].alive) continue;
-        float dx = enemies[i].x - x;
-        float dy = enemies[i].y - y;
-        float d2 = dx * dx + dy * dy;
-        if (d2 < bestDist) {
-            bestDist = d2;
-            bestIdx = i;
+    for (int c = 0; c < chainsLeft; c++) {
+        // Find nearest enemy within 60px via spatial grid
+        int nearby[16];
+        int nearCount = collision_query_point(cx, cy, 60.0f, nearby, 16);
+        float bestDist = 3600.0f;
+        int bestIdx = -1;
+        for (int ni = 0; ni < nearCount; ni++) {
+            int i = nearby[ni];
+            if (i == src || !enemies[i].alive) continue;
+            float dx = enemies[i].x - cx;
+            float dy = enemies[i].y - cy;
+            float d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) {
+                bestDist = d2;
+                bestIdx = i;
+            }
         }
-    }
 
-    if (bestIdx < 0) return;
+        if (bestIdx < 0) break;
 
-    // Visual arc
-    ChainVisual* cv = &chainVisuals[chainVisualIdx];
-    cv->x1 = x;
-    cv->y1 = y;
-    cv->x2 = enemies[bestIdx].x;
-    cv->y2 = enemies[bestIdx].y;
-    cv->life = 3;
-    chainVisualIdx = (chainVisualIdx + 1) % MAX_CHAIN_VISUALS;
+        // Visual arc
+        ChainVisual* cv = &chainVisuals[chainVisualIdx];
+        cv->x1 = cx;
+        cv->y1 = cy;
+        cv->x2 = enemies[bestIdx].x;
+        cv->y2 = enemies[bestIdx].y;
+        cv->life = 3;
+        chainVisualIdx = (chainVisualIdx + 1) % MAX_CHAIN_VISUALS;
 
-    // Damage + effects
-    enemy_damage(bestIdx, dmg);
-    entities_spawn_particles(enemies[bestIdx].x, enemies[bestIdx].y, 2, 0);
+        // Damage + effects
+        enemy_damage(bestIdx, dmg);
+        entities_spawn_particles(enemies[bestIdx].x, enemies[bestIdx].y, 2, 0);
 
-    // Stun chance
-    if (stunChance > 0 && enemies[bestIdx].alive && rng_range(1, 100) <= stunChance) {
-        enemies[bestIdx].stunTimer = 10;
-    }
+        // Stun chance
+        if (stunChance > 0 && enemies[bestIdx].alive && rng_range(1, 100) <= stunChance) {
+            enemies[bestIdx].stunTimer = 10;
+        }
 
-    // Chain further
-    if (chainsLeft > 1 && enemies[bestIdx].alive) {
-        weapons_fire_chain_at(enemies[bestIdx].x, enemies[bestIdx].y, dmg, chainsLeft - 1, stunChance, bestIdx);
+        if (!enemies[bestIdx].alive) break;
+        cx = enemies[bestIdx].x;
+        cy = enemies[bestIdx].y;
+        src = bestIdx;
     }
 }
 
@@ -276,27 +345,35 @@ void weapons_update_riptides(void)
         r->tickTimer++;
         float r2 = r->pullRadius * r->pullRadius;
 
-        for (int i = 0; i < enemyCount; i++) {
+        // Query nearby enemies via spatial grid
+        int nearby[64];
+        int nearCount = collision_query_point(r->x, r->y, r->pullRadius, nearby, 64);
+        for (int ni = 0; ni < nearCount; ni++) {
+            int i = nearby[ni];
+            if (i >= MAX_ENEMIES) continue;
             Enemy* e = &enemies[i];
-            if (!e->alive) continue;
             float dx = r->x - e->x;
             float dy = r->y - e->y;
             float d2 = dx * dx + dy * dy;
             if (d2 < r2 && d2 > 1.0f) {
-                // Pull toward center
-                float d = sqrtf(d2);
-                float pullStr = 1.5f;
+                // Pull toward center using fast_inv_sqrt
+                float inv_d = fast_inv_sqrt(d2);
+                float d = d2 * inv_d;
+                float pullRatio = 1.0f - (d / r->pullRadius);
+                float pullStr = 0.8f + (pullRatio * 2.2f); // max 3.0 at center (was 4.5)
                 int s = game.arenaShrink;
-                e->x = clampf(e->x + dx / d * pullStr, (float)(s + 5), (float)(MAP_W - s - 5));
-                e->y = clampf(e->y + dy / d * pullStr, (float)(s + 5), (float)(MAP_H - s - 5));
+                float tx = -dy * inv_d;
+                float ty = dx * inv_d;
+                float ndx = dx * inv_d;
+                float ndy = dy * inv_d;
+                e->x = clampf(e->x + (ndx * pullStr) + (tx * pullRatio * 2.0f), (float)(s + 5), (float)(MAP_W - s - 5));
+                e->y = clampf(e->y + (ndy * pullStr) + (ty * pullRatio * 2.0f), (float)(s + 5), (float)(MAP_H - s - 5));
 
-                // Tick damage every 15 frames
-                if (r->tickTimer % 15 == 0) {
+                // Tick damage every 20 frames (was 15)
+                if (r->tickTimer % 20 == 0) {
                     if (r->hitCooldowns[i] <= 0) {
                         float dmg = r->dmg;
-                        // Center bonus (within 30% of radius)
                         if (d < r->pullRadius * 0.3f) dmg *= r->dmgMult;
-                        // Maelstrom synergy check done at Brine Splash fire time
                         enemy_damage(i, dmg);
                         r->hitCooldowns[i] = 10;
                     }
@@ -304,10 +381,11 @@ void weapons_update_riptides(void)
             }
         }
 
-        // Tick down cooldowns
-        if (r->tickTimer % 15 == 0) {
-            for (int i = 0; i < enemyCount; i++) {
-                if (r->hitCooldowns[i] > 0) r->hitCooldowns[i]--;
+        // Tick down cooldowns for nearby enemies only
+        if (r->tickTimer % 20 == 0) {
+            for (int ni = 0; ni < nearCount; ni++) {
+                int i = nearby[ni];
+                if (i < MAX_ENEMIES && r->hitCooldowns[i] > 0) r->hitCooldowns[i]--;
             }
         }
 
@@ -350,7 +428,7 @@ static void spawn_depth_charge(float x, float y, float dmg, float blastRadius, f
     dc->dmg = dmg;
     dc->blastRadius = blastRadius;
     dc->slowFactor = slowFactor;
-    dc->fuseFrames = 30; // 1 second fuse
+    dc->fuseFrames = 20; // ~0.67 second fuse (faster detonation)
     dc->slowFieldLife = slowFieldLife;
     dc->alive = 1;
     dc->detonated = 0;
@@ -370,9 +448,12 @@ void weapons_update_depth_charges(void)
                 dc->detonated = 1;
                 float r2 = dc->blastRadius * dc->blastRadius;
 
-                for (int i = 0; i < enemyCount; i++) {
+                // Detonation: damage nearby enemies via spatial grid
+                int detNear[64];
+                int detCount = collision_query_point(dc->x, dc->y, dc->blastRadius, detNear, 64);
+                for (int ni = 0; ni < detCount; ni++) {
+                    int i = detNear[ni];
                     Enemy* e = &enemies[i];
-                    if (!e->alive) continue;
                     float dx = e->x - dc->x;
                     float dy = e->y - dc->y;
                     if (dx * dx + dy * dy < r2) {
@@ -403,11 +484,13 @@ void weapons_update_depth_charges(void)
                 dc->alive = 0;
                 continue;
             }
-            // Slow enemies in range
+            // Slow enemies in range via spatial grid
+            int slowNear[64];
+            int slowCount = collision_query_point(dc->x, dc->y, dc->blastRadius, slowNear, 64);
             float r2 = dc->blastRadius * dc->blastRadius;
-            for (int i = 0; i < enemyCount; i++) {
+            for (int ni = 0; ni < slowCount; ni++) {
+                int i = slowNear[ni];
                 Enemy* e = &enemies[i];
-                if (!e->alive) continue;
                 float dx = e->x - dc->x;
                 float dy = e->y - dc->y;
                 if (dx * dx + dy * dy < r2) {
@@ -446,6 +529,7 @@ static void spawn_anchor(float x, float y, float dmg, int durationFrames, float 
     a->x = x;
     a->y = y;
     a->dmg = dmg;
+    a->durationFrames = durationFrames;
     a->lifeFrames = durationFrames;
     a->durationFrames = durationFrames;
     a->slowFactor = slowFactor;
@@ -550,74 +634,29 @@ void weapons_fire_all(void)
 
         case WEAPON_BRINE_SPLASH:
         {
-            int lv = w->level - 1;
-            float radius[] = { 60.0f, 83.0f, 105.0f };
-            float dmg[] = { 1.0f, 2.0f, 3.0f };
-            float r = radius[lv] * game.synergyBurstRadius;
-
-            for (int j = 0; j < enemyCount; j++) {
-                Enemy* e = &enemies[j];
-                if (!e->alive) continue;
-                float edx = e->x - player.x;
-                float edy = e->y - player.y;
-                if (edx * edx + edy * edy < r * r) {
-                    float bdmg = dmg[lv];
-                    // Maelstrom synergy: +30% dmg if enemy is in a riptide
-                    if (game.synergyMaelstrom > 1.0f) {
-                        for (int ri = 0; ri < riptideCount; ri++) {
-                            if (!riptides[ri].alive) continue;
-                            float rdx = e->x - riptides[ri].x;
-                            float rdy = e->y - riptides[ri].y;
-                            if (rdx * rdx + rdy * rdy < riptides[ri].pullRadius * riptides[ri].pullRadius) {
-                                bdmg *= game.synergyMaelstrom;
-                                break;
-                            }
-                        }
-                    }
-                    enemy_damage(j, bdmg);
-                    if (w->level >= 3 && enemies[j].alive) {
-                        enemies[j].slowTimer = 6;
-                        enemies[j].slowFactor = 0.5f;
-                    }
-                }
-            }
-
-            // Visual ring
-            game.brineSplash.active = 1;
-            game.brineSplash.x = player.x;
-            game.brineSplash.y = player.y;
-            game.brineSplash.maxRadius = r;
-            game.brineSplash.radius = 10.0f;
-            game.brineSplash.frame = 0;
-
-            game_trigger_shake(2);
-            entities_spawn_particles(player.x, player.y, 8, 1);
-            sound_play_boom(80.0f, 0.5f, 0.15f);
+            // Now handled passively in weapons_update_brine_splash
             break;
         }
 
         case WEAPON_GHOST_LIGHT:
         {
-            float glDmg[] = { 1.0f, 2.0f, 2.0f };
+            float glDmg[] = { 1.5f, 2.0f, 2.5f };
             float glTurn[] = { 10.0f, 20.0f, 25.0f };
+            int glCount[] = { 1, 2, 3 };
             int lv = w->level - 1;
             float bulletSpd = 2.0f;
             if (player.seaLegs >= 2) bulletSpd *= 1.15f;
             int life = (int)(2000.0f / FRAME_MS);
             float turn = glTurn[lv] * PI_F / 180.0f;
             uint8_t retarget = (w->level >= 3) ? 1 : 0;
+            float angle = atan2f(player.aimDy, player.aimDx);
+            int count = glCount[lv];
+            float spread = 0.3f;
 
-            if (w->level < 3) {
+            for (int wi = 0; wi < count; wi++) {
+                float off = (count > 1) ? (wi - (count - 1) * 0.5f) * spread : 0.0f;
                 entities_spawn_bullet(player.x, player.y,
-                    player.aimDx, player.aimDy,
-                    glDmg[lv], bulletSpd, life, 0, 1, turn, retarget, 2);
-            } else {
-                float angle = atan2f(player.aimDy, player.aimDx);
-                entities_spawn_bullet(player.x, player.y,
-                    cosf(angle - 0.3f), sinf(angle - 0.3f),
-                    glDmg[lv], bulletSpd, life, 0, 1, turn, retarget, 2);
-                entities_spawn_bullet(player.x, player.y,
-                    cosf(angle + 0.3f), sinf(angle + 0.3f),
+                    cosf(angle + off), sinf(angle + off),
                     glDmg[lv], bulletSpd, life, 0, 1, turn, retarget, 2);
             }
             sound_play_weapon(600.0f);
@@ -627,8 +666,8 @@ void weapons_fire_all(void)
         case WEAPON_ANCHOR_DROP:
         {
             int lv = w->level - 1;
-            float dmg[] = { 1.0f, 2.0f, 3.0f };
-            int duration[] = { 180, 240, 300 }; // 6s, 8s, 10s in frames
+            float dmg[] = { 1.5f, 2.5f, 4.0f };
+            int duration[] = { 240, 300, 360 }; // 8s, 10s, 12s in frames
             int maxAnch[] = { 3, 4, 5 };
             float slowFact = (w->level >= 3) ? 0.7f : 1.0f;
             slowFact *= game.synergyRuneSlow;
@@ -658,15 +697,19 @@ void weapons_fire_all(void)
             game_trigger_shake(5);
             entities_spawn_particles(player.x, player.y, 12, 1);
 
-            for (int j = 0; j < enemyCount; j++) {
+            // Use spatial grid for foghorn blast
+            int fhNear[64];
+            int fhCount = collision_query_point(player.x, player.y, radius[lv], fhNear, 64);
+            for (int ni = 0; ni < fhCount; ni++) {
+                int j = fhNear[ni];
                 Enemy* e = &enemies[j];
-                if (!e->alive) continue;
                 float edx = e->x - player.x;
                 float edy = e->y - player.y;
-                float dist = sqrtf(edx * edx + edy * edy);
-                if (dist < radius[lv] && dist > 0.0f) {
-                    float pushX = edx / dist * pushDist[lv];
-                    float pushY = edy / dist * pushDist[lv];
+                float d2 = edx * edx + edy * edy;
+                if (d2 < radius[lv] * radius[lv] && d2 > 1.0f) {
+                    float inv_d = fast_inv_sqrt(d2);
+                    float pushX = edx * inv_d * pushDist[lv];
+                    float pushY = edy * inv_d * pushDist[lv];
                     int s = game.arenaShrink;
                     e->x = clampf(e->x + pushX, (float)(s + 5), (float)(MAP_W - s - 5));
                     e->y = clampf(e->y + pushY, (float)(s + 5), (float)(MAP_H - s - 5));
