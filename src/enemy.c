@@ -43,7 +43,11 @@ void enemy_update_all(void)
         float moveX = dx * e->speed * e->slowFactor * slowMo;
         float moveY = dy * e->speed * e->slowFactor * slowMo;
 
+        // Drowned Compass: skip AI variance, beeline straight at player
+        int beelineOnly = (game.activeRelic == RELIC_DROWNED_COMPASS);
+
         // Type-specific AI
+        if (beelineOnly) goto skip_ai;
         switch (e->type) {
         case ENEMY_CREEPER:
             if (game.frameCount % 10 == 0) {
@@ -173,8 +177,7 @@ void enemy_update_all(void)
         default:
             break;
         }
-
-        // Soft separation: check 5 random neighbors every 3rd frame
+        skip_ai:;
         if (game.frameCount % 3 == 0 && enemyCount > 1) {
             int ne = enemyCount;
             int checkCount = ne - 1 < 5 ? ne - 1 : 5;
@@ -230,6 +233,23 @@ void enemy_damage(int idx, float amount)
     Enemy* e = &enemies[idx];
     if (!e->alive) return;
 
+    // Cursed Lantern: deal 1.5x damage
+    if (game.activeRelic == RELIC_CURSED_LANTERN) {
+        amount *= 1.5f;
+    }
+
+    // Fathom Debt: next hit after taking damage = 5x damage
+    if (game.relicFathomCharged) {
+        amount *= 5.0f;
+        game.relicFathomCharged = 0;
+    }
+
+    // Tidebreaker: projectile damage -20% (aura radius already buffed)
+    // This is applied to all damage — aura weapons benefit from radius, not raw damage
+    if (game.activeRelic == RELIC_TIDEBREAKER) {
+        amount *= 0.8f;
+    }
+
     // Tidecaller passive: +5% damage per stack
     if (player.tidecaller > 0) {
         amount *= (1.0f + 0.05f * player.tidecaller);
@@ -241,7 +261,8 @@ void enemy_damage(int idx, float amount)
     if (rng_range(1, 100) <= critChance) {
         amount *= 3.0f;
         crit = 1;
-        entities_spawn_fx(e->x, e->y, 1, 1); // spark FX
+        entities_spawn_fx(e->x, e->y, 2, 1); // crit X pattern
+        entities_spawn_particles(e->x, e->y, 4, 0); // crit spark particles
         game_trigger_shake(1);
     }
 
@@ -252,21 +273,28 @@ void enemy_damage(int idx, float amount)
     if (e->hp <= 0) {
         e->alive = 0;
         game.score += 10;
+        game.runKills++;
+        game.killsPerEnemy[e->type]++;
 
-        // Death particles
-        int deathParticles = 5;
-        if (e->type == ENEMY_CREEPER || e->type == ENEMY_LAMPREY) deathParticles = 6;
-        else if (e->type == ENEMY_ABYSSAL) { deathParticles = 12; game_trigger_shake(2); }
-        else if (e->type == ENEMY_SEER || e->type == ENEMY_HARBINGER) deathParticles = 10;
-        else if (e->type == ENEMY_BLOAT) deathParticles = 10;
-        else deathParticles = 6;
+        // Death particles (enhanced counts for juicier deaths)
+        int deathParticles;
+        if (e->type == ENEMY_CREEPER || e->type == ENEMY_LAMPREY) deathParticles = 8;
+        else if (e->type == ENEMY_ABYSSAL) { deathParticles = 15; game_trigger_shake(3); }
+        else if (e->type == ENEMY_SEER || e->type == ENEMY_HARBINGER) deathParticles = 12;
+        else if (e->type == ENEMY_BLOAT) deathParticles = 14;
+        else deathParticles = 8;
 
         entities_spawn_particles(e->x, e->y, deathParticles, 1);
         sound_play_kill();
         entities_spawn_fx(e->x, e->y, 0, 2); // death burst ring
+        entities_spawn_fx(e->x, e->y, 1, 2); // impact spark overlay
 
-        // Spawn XP
-        entities_spawn_xp_gem(e->x, e->y, XP_PER_KILL);
+        // Spawn XP (Wailing Current: gems spawn at player position)
+        {
+            float gx = (game.activeRelic == RELIC_WAILING_CURRENT) ? player.x : e->x;
+            float gy = (game.activeRelic == RELIC_WAILING_CURRENT) ? player.y : e->y;
+            entities_spawn_xp_gem(gx, gy, XP_PER_KILL);
+        }
 
         // Enemy drop roll
         {
@@ -328,7 +356,7 @@ void enemy_damage(int idx, float amount)
 
         // Kill streak tracking
         game.streakKills++;
-        game.streakWindow = 30;
+        game.streakWindow = 40;
         if (game.streakKills >= 5 && game.streakMultiplier <= 1.0f) {
             game.streakMultiplier = 2.0f;
             game.streakTimer = 90;

@@ -162,7 +162,7 @@ int entities_spawn_xp_gem(float x, float y, int value)
     g->x = x;
     g->y = y;
     g->value = value;
-    g->lifeFrames = 300; // ~10 seconds
+    g->lifeFrames = 30000; // never despawns
     g->alive = 1;
 
     xpGemCount++;
@@ -176,14 +176,12 @@ int entities_spawn_pickup(float x, float y)
 {
     if (pickupCount >= MAX_PICKUPS) return -1;
 
-    // Roll pickup type
+    // Roll pickup type (no new weapons from drops — only upgrade held weapons)
     int roll = rng_range(1, 100);
     PickupType type;
-    if (roll <= 15) {
+    if (roll <= 20) {
         type = PICKUP_WEAPON_UPGRADE;
-    } else if (roll <= 30) {
-        type = PICKUP_NEW_WEAPON;
-    } else if (roll <= 70) {
+    } else if (roll <= 60) {
         type = PICKUP_HEALTH;
     } else {
         type = PICKUP_XP_BURST;

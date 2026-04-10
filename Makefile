@@ -14,7 +14,7 @@ endif
 
 SRC = src/main.c src/game.c src/images.c src/rendering.c src/entities.c \
       src/collision.c src/player.c src/enemy.c src/weapons.c src/bullets.c \
-      src/ui.c src/sound.c src/save.c
+      src/ui.c src/sound.c src/save.c src/keeper.c src/boss.c src/relic.c
 
 UINCDIR = src
 

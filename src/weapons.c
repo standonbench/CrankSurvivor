@@ -5,13 +5,13 @@
 // Weapon stat tables
 // ---------------------------------------------------------------------------
 static const int cooldownTable[WEAPON_COUNT][3] = {
-    { 700,  500,  350  }, // Signal Beam (was 450/250)
+    { 500,  400,  300  }, // Signal Beam (faster fire + auto-track)
     {   0,    0,    0  }, // Tide Pool (always active)
     { 1800, 1400, 1000 }, // Harpoon (was 800)
     {    0,    0,    0  }, // Brine Splash (always active)
     { 1500,  900,  600 }, // Ghost Light (was 1800/1100)
     { 3000, 2200, 1500 }, // Anchor Drop (was 4000/2800/1800)
-    { 6000, 4500, 2800 }, // Foghorn (was 7000)
+    { 4500, 3500, 2800 }, // Foghorn (reduced L1/L2 for stun utility)
     { 1200,  900,  700 }, // Chain Lightning (was 600)
     { 3000, 2400, 1800 }, // Riptide
     { 2500, 2000, 1800 }, // Depth Charge (was 1500)
@@ -34,10 +34,21 @@ const char* weapon_get_name(WeaponId id)
 {
     static const char* names[] = {
         "Light Beam", "Ward Circle", "Spear of Light",
-        "Holy Burst", "Spirit Wisp", "Binding Rune", "Banishing Cry",
+        "Holy Aura", "Spirit Wisp", "Binding Rune", "Banishing Cry",
         "Chain Bolt", "Undertow", "Abyssal Mine"
     };
+    static const char* evolvedNames[] = {
+        "Prismatic Flare", "Maelstrom", "Leviathan Spine",
+        NULL, "Wisp Swarm", NULL, "Siren's Wail",
+        "Storm Cage", NULL, "Kraken's Clutch"
+    };
     if (id < 0 || id >= WEAPON_COUNT) return "Unknown";
+    // Check if this weapon is evolved in the player's loadout
+    for (int i = 0; i < player.weaponCount; i++) {
+        if (player.weapons[i].id == id && player.weapons[i].evolved && evolvedNames[id]) {
+            return evolvedNames[id];
+        }
+    }
     return names[id];
 }
 
@@ -72,14 +83,26 @@ void weapons_calc_synergies(void)
     game.synergyBeamDmg = (hasWeapon[WEAPON_HARPOON] && hasWeapon[WEAPON_SIGNAL_BEAM]) ? 1.0f : 0.0f;
     // Supernatural Control: Ghost Light + Anchor → slow 20% stronger
     game.synergyRuneSlow = (hasWeapon[WEAPON_GHOST_LIGHT] && hasWeapon[WEAPON_ANCHOR_DROP]) ? 0.8f : 1.0f;
-    // Arsenal Power: Foghorn + 4+ weapons → cry cooldown -25%
-    game.synergyCryCooldown = (hasWeapon[WEAPON_FOGHORN] && player.weaponCount >= 4) ? 0.75f : 1.0f;
+    // Arsenal Power: Foghorn + 3+ weapons → cry cooldown -25%
+    game.synergyCryCooldown = (hasWeapon[WEAPON_FOGHORN] && player.weaponCount >= 3) ? 0.75f : 1.0f;
     // Static Charge: Chain Lightning + Tide Pool → orb chain chance
     game.synergyStaticCharge = (hasWeapon[WEAPON_CHAIN_LIGHTNING] && hasWeapon[WEAPON_TIDE_POOL]) ? 1.0f : 0.0f;
     // Maelstrom: Riptide + Brine Splash → Brine +20% dmg in vortex
     game.synergyMaelstrom = (hasWeapon[WEAPON_RIPTIDE] && hasWeapon[WEAPON_BRINE_SPLASH]) ? 1.2f : 1.0f;
     // Depth Hunter: Depth Charge + Harpoon → harpoon kills drop mini-mines
     game.synergyDepthHunter = (hasWeapon[WEAPON_DEPTH_CHARGE] && hasWeapon[WEAPON_HARPOON]) ? 1.0f : 0.0f;
+
+    // Synergy activation notification
+    int synergyCount = (game.synergyBurstRadius > 1.0f) + (game.synergyBeamDmg > 0) +
+                       (game.synergyRuneSlow < 1.0f) + (game.synergyCryCooldown < 1.0f) +
+                       (game.synergyStaticCharge > 0) + (game.synergyMaelstrom > 1.0f) +
+                       (game.synergyDepthHunter > 0);
+    if (synergyCount > game.lastActiveSynergyCount && game.lastActiveSynergyCount >= 0) {
+        snprintf(game.announceText, sizeof(game.announceText), "SYNERGY!");
+        game.announceTimer = 45;
+        sound_play_confirm();
+    }
+    game.lastActiveSynergyCount = synergyCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,22 +117,66 @@ void weapons_update_tide_pool(void)
     if (tpIdx < 0 || player.dead) return;
 
     int lv = player.weapons[tpIdx].level;
-    int orbCount[] = { 2, 3, 3 };
-    float radius[] = { 40.0f, 52.0f, 60.0f };
-    float dmg[] = { 1.0f, 1.0f, 1.5f };
-    float speed[] = { 0.10f, 0.13f, 0.16f };
-    int li = lv - 1;
+    int evolved = player.weapons[tpIdx].evolved;
 
-    game.tidePoolAngle += speed[li];
+    int orbCnt;
+    float rad, dmgVal, spd;
+
+    if (evolved) {
+        // Maelstrom: more orbs, doubled radius, higher damage, pulls enemies
+        orbCnt = 5;
+        rad = 120.0f;
+        dmgVal = 2.5f;
+        spd = 0.18f;
+    } else {
+        int orbCount[] = { 2, 3, 3 };
+        float radius[] = { 40.0f, 52.0f, 60.0f };
+        float dmg[] = { 1.0f, 1.0f, 1.5f };
+        float speed[] = { 0.10f, 0.13f, 0.16f };
+        int li = lv - 1;
+        orbCnt = orbCount[li];
+        rad = radius[li];
+        dmgVal = dmg[li];
+        spd = speed[li];
+    }
+
+    // Tidebreaker: aura weapons 1.5x radius
+    if (game.activeRelic == RELIC_TIDEBREAKER) {
+        rad *= 1.5f;
+    }
+
+    game.tidePoolAngle += spd;
 
     float px = player.x;
     float py = player.y;
     float twoPi = 2.0f * PI_F;
 
-    for (int o = 0; o < orbCount[li]; o++) {
-        float a = game.tidePoolAngle + o * (twoPi / orbCount[li]);
-        float ox = px + cosf(a) * radius[li];
-        float oy = py + sinf(a) * radius[li];
+    // Maelstrom: pull enemies toward orbit center
+    if (evolved) {
+        float pullRadius = rad + 20.0f;
+        int pullNear[64];
+        int pullCount = collision_query_point(px, py, pullRadius, pullNear, 64);
+        float pr2 = pullRadius * pullRadius;
+        for (int ni = 0; ni < pullCount; ni++) {
+            int i = pullNear[ni];
+            Enemy* e = &enemies[i];
+            float edx = e->x - px;
+            float edy = e->y - py;
+            float d2 = edx * edx + edy * edy;
+            if (d2 < pr2 && d2 > 100.0f) {
+                float inv_d = fast_inv_sqrt(d2);
+                float pullStr = 1.2f;
+                int s = game.arenaShrink;
+                e->x = clampf(e->x - edx * inv_d * pullStr, (float)(s + 5), (float)(MAP_W - s - 5));
+                e->y = clampf(e->y - edy * inv_d * pullStr, (float)(s + 5), (float)(MAP_H - s - 5));
+            }
+        }
+    }
+
+    for (int o = 0; o < orbCnt; o++) {
+        float a = game.tidePoolAngle + o * (twoPi / orbCnt);
+        float ox = px + cosf(a) * rad;
+        float oy = py + sinf(a) * rad;
 
         // Particle trail
         if (game.frameCount % 3 == 0) {
@@ -127,9 +194,9 @@ void weapons_update_tide_pool(void)
             if (edx * edx + edy * edy < 441.0f) {
                 if (game.frameCount - e->lastHitByTidepool >= 15) {
                     e->lastHitByTidepool = game.frameCount;
-                    enemy_damage(i, dmg[li]);
-                    // Static Charge synergy: 5% chain on orb hit
-                    if (game.synergyStaticCharge > 0 && enemies[i].alive && rng_range(1, 100) <= 5) {
+                    enemy_damage(i, dmgVal);
+                    // Static Charge synergy: 12% chain on orb hit
+                    if (game.synergyStaticCharge > 0 && enemies[i].alive && rng_range(1, 100) <= 12) {
                         weapons_fire_chain_at(e->x, e->y, 1.0f, 2, 0, i);
                     }
                 }
@@ -155,7 +222,8 @@ void weapons_update_brine_splash(void)
     int lv = player.weapons[bsIdx].level;
     float radius[] = { 50.0f, 68.0f, 85.0f };
     float dmg[] = { 0.5f, 1.0f, 2.0f };
-    float r = radius[lv - 1] * game.synergyBurstRadius;
+    float auraRadMult = (game.activeRelic == RELIC_TIDEBREAKER) ? 1.5f : 1.0f;
+    float r = radius[lv - 1] * game.synergyBurstRadius * auraRadMult;
 
     // Visual ring stays permanently on the player
     game.brineSplash.active = 1;
@@ -164,8 +232,8 @@ void weapons_update_brine_splash(void)
     game.brineSplash.maxRadius = r;
     game.brineSplash.radius = r + (sinf(game.frameCount * 0.1f) * 2.0f);
 
-    // Tick damage every 30 frames (1s) via spatial grid
-    if (game.frameCount % 30 == 0) {
+    // Tick damage every 15 frames (0.5s) via spatial grid
+    if (game.frameCount % 15 == 0) {
         int nearby[64];
         int nearCount = collision_query_point(player.x, player.y, r, nearby, 64);
         for (int ni = 0; ni < nearCount; ni++) {
@@ -188,9 +256,10 @@ void weapons_update_brine_splash(void)
                     }
                 }
                 enemy_damage(j, bdmg);
-                if (lv >= 3 && enemies[j].alive) {
-                    enemies[j].slowTimer = 30;
-                    enemies[j].slowFactor = 0.5f;
+                // Slow at all levels (10% at L1-2, 50% at L3)
+                if (enemies[j].alive) {
+                    enemies[j].slowTimer = 15;
+                    enemies[j].slowFactor = (lv >= 3) ? 0.5f : 0.9f;
                 }
             }
         }
@@ -281,13 +350,18 @@ void weapons_fire_chain_at(float x, float y, float dmg, int chainsLeft, int stun
 
         if (bestIdx < 0) break;
 
-        // Visual arc
+        // Visual arc (Storm Cage evolved = persistent fences)
+        int clEvo = 0;
+        for (int wi = 0; wi < player.weaponCount; wi++) {
+            if (player.weapons[wi].id == WEAPON_CHAIN_LIGHTNING && player.weapons[wi].evolved)
+                { clEvo = 1; break; }
+        }
         ChainVisual* cv = &chainVisuals[chainVisualIdx];
         cv->x1 = cx;
         cv->y1 = cy;
         cv->x2 = enemies[bestIdx].x;
         cv->y2 = enemies[bestIdx].y;
-        cv->life = 3;
+        cv->life = clEvo ? 15 : 3;
         chainVisualIdx = (chainVisualIdx + 1) % MAX_CHAIN_VISUALS;
 
         // Damage + effects
@@ -442,6 +516,30 @@ void weapons_update_depth_charges(void)
         if (!dc->alive) continue;
 
         if (!dc->detonated) {
+            // Check if depth charge weapon is evolved (Kraken's Clutch)
+            int dcEvo = 0;
+            for (int wi = 0; wi < player.weaponCount; wi++) {
+                if (player.weapons[wi].id == WEAPON_DEPTH_CHARGE && player.weapons[wi].evolved) {
+                    dcEvo = 1; break;
+                }
+            }
+
+            // Kraken's Clutch: root nearby enemies during fuse phase
+            if (dcEvo && dc->fuseFrames > 1) {
+                int grabNear[32];
+                int grabCount = collision_query_point(dc->x, dc->y, dc->blastRadius * 0.8f, grabNear, 32);
+                float gr2 = (dc->blastRadius * 0.8f) * (dc->blastRadius * 0.8f);
+                for (int ni = 0; ni < grabCount; ni++) {
+                    int i = grabNear[ni];
+                    Enemy* e = &enemies[i];
+                    float dx = e->x - dc->x;
+                    float dy = e->y - dc->y;
+                    if (dx * dx + dy * dy < gr2) {
+                        e->stunTimer = 3; // refresh root each frame
+                    }
+                }
+            }
+
             dc->fuseFrames--;
             if (dc->fuseFrames <= 0) {
                 // DETONATE
@@ -465,10 +563,31 @@ void weapons_update_depth_charges(void)
                     }
                 }
 
+                // Boss damage from detonation
+                if (game.bossActive && game.boss.alive) {
+                    float bdx = game.boss.x - dc->x;
+                    float bdy = game.boss.y - dc->y;
+                    if (bdx * bdx + bdy * bdy < r2) {
+                        boss_damage(dc->dmg);
+                    }
+                }
+
                 game_trigger_shake(4);
                 entities_spawn_particles(dc->x, dc->y, 10, 1);
                 sound_play_boom(60.0f, 0.7f, 0.2f);
-                entities_spawn_fx(dc->x, dc->y, 0, 1);
+                entities_spawn_fx(dc->x, dc->y, 0, 1); // blast ring
+
+                // Kraken's Clutch: chain-detonate nearby mines
+                if (dcEvo) {
+                    for (int dj = 0; dj < depthChargeCount; dj++) {
+                        if (dj == di || !depthCharges[dj].alive || depthCharges[dj].detonated) continue;
+                        float cdx = depthCharges[dj].x - dc->x;
+                        float cdy = depthCharges[dj].y - dc->y;
+                        if (cdx * cdx + cdy * cdy < 80.0f * 80.0f) {
+                            depthCharges[dj].fuseFrames = 2; // detonate next frame
+                        }
+                    }
+                }
 
                 // Leave slow field or die
                 if (dc->slowFieldLife > 0) {
@@ -563,72 +682,126 @@ void weapons_fire_all(void)
             cd = (int)(cd * game.synergyCryCooldown);
         }
 
-        if (now - w->lastFiredMs < (uint32_t)cd) continue;
+        // Drowned Bell: no cooldowns for first 30s
+        int bellActive = (game.activeRelic == RELIC_DROWNED_BELL && game.relicBellTimer > 0.0f);
+        if (!bellActive && now - w->lastFiredMs < (uint32_t)cd) continue;
         w->lastFiredMs = now;
 
         switch (w->id) {
         case WEAPON_SIGNAL_BEAM:
         {
-            float dmg = 1.0f + game.synergyBeamDmg;
-            float bulletSpd = BULLET_SPEED;
-            if (player.seaLegs >= 2) bulletSpd *= 1.15f;
-            uint8_t pierce = player.lighthouseLens ? 1 : 0;
-            int life = BULLET_LIFETIME_F;
-
-            if (w->level == 1) {
-                entities_spawn_bullet(player.x, player.y,
-                    player.aimDx, player.aimDy,
-                    dmg, bulletSpd, life, pierce, 0, 0, 0, 0);
-            } else if (w->level == 2) {
-                float spreadRad = 12.0f * PI_F / 180.0f;
-                for (int b = -1; b <= 1; b++) {
-                    float angle = atan2f(player.aimDy, player.aimDx) + b * spreadRad;
-                    entities_spawn_bullet(player.x, player.y,
-                        cosf(angle), sinf(angle),
-                        dmg, bulletSpd, life, pierce, 0, 0, 0, 0);
-                }
-            } else {
-                dmg = 2.0f + game.synergyBeamDmg;
-                float spreadRad = 10.0f * PI_F / 180.0f;
-                for (int b = -2; b <= 2; b++) {
-                    float angle = atan2f(player.aimDy, player.aimDx) + b * spreadRad;
-                    entities_spawn_bullet(player.x, player.y,
-                        cosf(angle), sinf(angle),
-                        dmg, bulletSpd, life, 1, 0, 0, 0, 0);
+            // Auto-track: nudge aim toward nearest enemy within 30°
+            float aimDx = player.aimDx, aimDy = player.aimDy;
+            if (game.cachedTargetIdx >= 0 && game.cachedTargetIdx < enemyCount && enemies[game.cachedTargetIdx].alive) {
+                float tdx = enemies[game.cachedTargetIdx].x - player.x;
+                float tdy = enemies[game.cachedTargetIdx].y - player.y;
+                float td = sqrtf(tdx * tdx + tdy * tdy);
+                if (td > 1.0f) {
+                    tdx /= td; tdy /= td;
+                    // Check angle between aim and target (dot product)
+                    float dot = aimDx * tdx + aimDy * tdy;
+                    if (dot > 0.866f) { // within ~30°
+                        aimDx = tdx; aimDy = tdy;
+                    }
                 }
             }
-            sound_play_weapon(400.0f);
-            entities_spawn_fx(player.x, player.y, 1, 1); // muzzle flash
+
+            if (w->evolved) {
+                // Prismatic Flare: 3 wide piercing beams + burning ground on hit
+                float dmg = 3.0f + game.synergyBeamDmg;
+                float bulletSpd = BULLET_SPEED * 1.2f;
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                float spreadRad = 18.0f * PI_F / 180.0f;
+                for (int b = -1; b <= 1; b++) {
+                    float angle = atan2f(aimDy, aimDx) + b * spreadRad;
+                    entities_spawn_bullet(player.x, player.y,
+                        cosf(angle), sinf(angle),
+                        dmg, bulletSpd, BULLET_LIFETIME_F + 5, 255, 0, 0, 0, 0);
+                }
+                sound_play_weapon(500.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
+                game_trigger_shake(1);
+            } else {
+                float dmg = 1.0f + game.synergyBeamDmg;
+                float bulletSpd = BULLET_SPEED;
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                uint8_t pierce = player.lighthouseLens ? 255 : 0;
+                int life = BULLET_LIFETIME_F;
+
+                if (w->level == 1) {
+                    entities_spawn_bullet(player.x, player.y,
+                        aimDx, aimDy,
+                        dmg, bulletSpd, life, pierce, 0, 0, 0, 0);
+                } else if (w->level == 2) {
+                    float spreadRad = 12.0f * PI_F / 180.0f;
+                    for (int b = -1; b <= 1; b++) {
+                        float angle = atan2f(aimDy, aimDx) + b * spreadRad;
+                        entities_spawn_bullet(player.x, player.y,
+                            cosf(angle), sinf(angle),
+                            dmg, bulletSpd, life, pierce, 0, 0, 0, 0);
+                    }
+                } else {
+                    dmg = 2.0f + game.synergyBeamDmg;
+                    float spreadRad = 10.0f * PI_F / 180.0f;
+                    for (int b = -2; b <= 2; b++) {
+                        float angle = atan2f(aimDy, aimDx) + b * spreadRad;
+                        entities_spawn_bullet(player.x, player.y,
+                            cosf(angle), sinf(angle),
+                            dmg, bulletSpd, life, 255, 0, 0, 0, 0);
+                    }
+                }
+                sound_play_weapon(400.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
+            }
             break;
         }
 
         case WEAPON_HARPOON:
         {
-            float hDmg[] = { 3.0f, 5.0f, 8.0f };
-            float hSpd[] = { 4.0f, 5.0f, 5.0f };
-            int lv = w->level - 1;
-            float bulletSpd = hSpd[lv];
-            if (player.seaLegs >= 2) bulletSpd *= 1.15f;
-            int life = (int)(800.0f / FRAME_MS);
-
-            game_trigger_shake(2);
-            entities_spawn_particles(player.x, player.y, 3, 1);
-
-            if (w->level < 3) {
+            if (w->evolved) {
+                // Leviathan Spine: single massive piercing bolt, roots + AoE
+                float dmg = 12.0f;
+                float bulletSpd = 5.5f;
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                int life = (int)(1000.0f / FRAME_MS);
                 entities_spawn_bullet(player.x, player.y,
                     player.aimDx, player.aimDy,
-                    hDmg[lv], bulletSpd, life, 1, 0, 0, 0, 1);
+                    dmg, bulletSpd, life, 255, 0, 0, 0, 1);
+                game_trigger_shake(3);
+                entities_spawn_particles(player.x, player.y, 5, 1);
+                sound_play_weapon(250.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
             } else {
-                float angle = atan2f(player.aimDy, player.aimDx);
-                float offset = 8.0f * PI_F / 180.0f;
-                entities_spawn_bullet(player.x, player.y,
-                    cosf(angle - offset), sinf(angle - offset),
-                    hDmg[lv], bulletSpd, life, 1, 0, 0, 0, 1);
-                entities_spawn_bullet(player.x, player.y,
-                    cosf(angle + offset), sinf(angle + offset),
-                    hDmg[lv], bulletSpd, life, 1, 0, 0, 0, 1);
+                float hDmg[] = { 3.0f, 5.0f, 8.0f };
+                float hSpd[] = { 4.0f, 5.0f, 5.0f };
+                int lv = w->level - 1;
+                float bulletSpd = hSpd[lv];
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                int life = (int)(800.0f / FRAME_MS);
+
+                // Bone Compass: pierce 3 targets; normal: infinite pierce
+                uint8_t harpPierce = (game.activeRelic == RELIC_BONE_COMPASS) ? 3 : 255;
+
+                game_trigger_shake(2);
+                entities_spawn_particles(player.x, player.y, 3, 1);
+
+                if (w->level < 3) {
+                    entities_spawn_bullet(player.x, player.y,
+                        player.aimDx, player.aimDy,
+                        hDmg[lv], bulletSpd, life, harpPierce, 0, 0, 0, 1);
+                } else {
+                    float angle = atan2f(player.aimDy, player.aimDx);
+                    float offset = 8.0f * PI_F / 180.0f;
+                    entities_spawn_bullet(player.x, player.y,
+                        cosf(angle - offset), sinf(angle - offset),
+                        hDmg[lv], bulletSpd, life, harpPierce, 0, 0, 0, 1);
+                    entities_spawn_bullet(player.x, player.y,
+                        cosf(angle + offset), sinf(angle + offset),
+                        hDmg[lv], bulletSpd, life, harpPierce, 0, 0, 0, 1);
+                }
+                sound_play_weapon(300.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
             }
-            sound_play_weapon(300.0f);
             break;
         }
 
@@ -640,26 +813,45 @@ void weapons_fire_all(void)
 
         case WEAPON_GHOST_LIGHT:
         {
-            float glDmg[] = { 1.5f, 2.0f, 2.5f };
-            float glTurn[] = { 10.0f, 20.0f, 25.0f };
-            int glCount[] = { 1, 2, 3 };
-            int lv = w->level - 1;
-            float bulletSpd = 2.0f;
-            if (player.seaLegs >= 2) bulletSpd *= 1.15f;
-            int life = (int)(2000.0f / FRAME_MS);
-            float turn = glTurn[lv] * PI_F / 180.0f;
-            uint8_t retarget = (w->level >= 3) ? 1 : 0;
-            float angle = atan2f(player.aimDy, player.aimDx);
-            int count = glCount[lv];
-            float spread = 0.3f;
+            if (w->evolved) {
+                // Wisp Swarm: 5 fast homing wisps, retarget, higher damage
+                float dmg = 2.0f;
+                float bulletSpd = 2.5f;
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                int life = (int)(2500.0f / FRAME_MS);
+                float turn = 30.0f * PI_F / 180.0f;
+                float angle = atan2f(player.aimDy, player.aimDx);
+                for (int wi = 0; wi < 5; wi++) {
+                    float off = (wi - 2) * 0.4f;
+                    entities_spawn_bullet(player.x, player.y,
+                        cosf(angle + off), sinf(angle + off),
+                        dmg, bulletSpd, life, 0, 1, turn, 1, 2);
+                }
+                sound_play_weapon(650.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
+            } else {
+                float glDmg[] = { 1.5f, 2.0f, 2.5f };
+                float glTurn[] = { 10.0f, 20.0f, 25.0f };
+                int glCount[] = { 1, 2, 3 };
+                int lv = w->level - 1;
+                float bulletSpd = 2.0f;
+                if (player.seaLegs >= 2) bulletSpd *= 1.15f;
+                int life = (int)(2000.0f / FRAME_MS);
+                float turn = glTurn[lv] * PI_F / 180.0f;
+                uint8_t retarget = (w->level >= 3) ? 1 : 0;
+                float angle = atan2f(player.aimDy, player.aimDx);
+                int count = glCount[lv];
+                float spread = 0.3f;
 
-            for (int wi = 0; wi < count; wi++) {
-                float off = (count > 1) ? (wi - (count - 1) * 0.5f) * spread : 0.0f;
-                entities_spawn_bullet(player.x, player.y,
-                    cosf(angle + off), sinf(angle + off),
-                    glDmg[lv], bulletSpd, life, 0, 1, turn, retarget, 2);
+                for (int wi = 0; wi < count; wi++) {
+                    float off = (count > 1) ? (wi - (count - 1) * 0.5f) * spread : 0.0f;
+                    entities_spawn_bullet(player.x, player.y,
+                        cosf(angle + off), sinf(angle + off),
+                        glDmg[lv], bulletSpd, life, 0, 1, turn, retarget, 2);
+                }
+                sound_play_weapon(600.0f);
+                entities_spawn_fx(player.x, player.y, 1, 1);
             }
-            sound_play_weapon(600.0f);
             break;
         }
 
@@ -689,34 +881,53 @@ void weapons_fire_all(void)
         case WEAPON_FOGHORN:
         {
             int lv = w->level - 1;
-            float radius[] = { 90.0f, 120.0f, 150.0f };
+            float fhRadius[] = { 90.0f, 120.0f, 150.0f };
             float pushDist[] = { 45.0f, 60.0f, 90.0f };
-            float dmg[] = { 1.0f, 2.0f, 3.0f };
-            int stun = (w->level >= 3) ? 1 : 0;
+            float fhDmg[] = { 1.0f, 2.0f, 3.0f };
+            int evolved = w->evolved;
+
+            float rad = evolved ? 170.0f : fhRadius[lv];
+            float push = evolved ? 70.0f : pushDist[lv];
+            float dmgVal = evolved ? 4.0f : fhDmg[lv];
+            // Tidebreaker: aura weapons 1.5x radius
+            if (game.activeRelic == RELIC_TIDEBREAKER) rad *= 1.5f;
 
             game_trigger_shake(5);
             entities_spawn_particles(player.x, player.y, 12, 1);
 
             // Use spatial grid for foghorn blast
             int fhNear[64];
-            int fhCount = collision_query_point(player.x, player.y, radius[lv], fhNear, 64);
+            int fhCount = collision_query_point(player.x, player.y, rad, fhNear, 64);
             for (int ni = 0; ni < fhCount; ni++) {
                 int j = fhNear[ni];
                 Enemy* e = &enemies[j];
                 float edx = e->x - player.x;
                 float edy = e->y - player.y;
                 float d2 = edx * edx + edy * edy;
-                if (d2 < radius[lv] * radius[lv] && d2 > 1.0f) {
+                if (d2 < rad * rad && d2 > 1.0f) {
                     float inv_d = fast_inv_sqrt(d2);
-                    float pushX = edx * inv_d * pushDist[lv];
-                    float pushY = edy * inv_d * pushDist[lv];
+                    // Siren's Wail: PULL instead of push
+                    float dir = evolved ? -1.0f : 1.0f;
+                    float pushX = edx * inv_d * push * dir;
+                    float pushY = edy * inv_d * push * dir;
                     int s = game.arenaShrink;
                     e->x = clampf(e->x + pushX, (float)(s + 5), (float)(MAP_W - s - 5));
                     e->y = clampf(e->y + pushY, (float)(s + 5), (float)(MAP_H - s - 5));
-                    enemy_damage(j, dmg[lv]);
-                    if (stun && enemies[j].alive) {
-                        enemies[j].stunTimer = 20;
+                    enemy_damage(j, dmgVal);
+                    // Stun at all levels: 9f (L1), 15f (L2), 20f (L3), 60f evolved
+                    if (enemies[j].alive) {
+                        int stunFrames[] = { 9, 15, 20 };
+                        enemies[j].stunTimer = evolved ? 60 : stunFrames[lv];
                     }
+                }
+            }
+
+            // Boss damage from foghorn
+            if (game.bossActive && game.boss.alive) {
+                float bdx = game.boss.x - player.x;
+                float bdy = game.boss.y - player.y;
+                if (bdx * bdx + bdy * bdy < rad * rad) {
+                    boss_damage(dmgVal * 2.0f);
                 }
             }
 
@@ -724,11 +935,11 @@ void weapons_fire_all(void)
             game.foghornVisual.active = 1;
             game.foghornVisual.x = player.x;
             game.foghornVisual.y = player.y;
-            game.foghornVisual.maxRadius = radius[lv];
+            game.foghornVisual.maxRadius = rad;
             game.foghornVisual.radius = 10.0f;
             game.foghornVisual.frame = 0;
 
-            sound_play_boom(80.0f, 0.5f, 0.15f);
+            sound_play_boom(evolved ? 60.0f : 80.0f, 0.5f, 0.15f);
             break;
         }
 
@@ -736,10 +947,17 @@ void weapons_fire_all(void)
         {
             int lv = w->level - 1;
             float clDmg[] = { 1.0f, 2.0f, 2.0f };
-            int chains[] = { 3, 5, 7 }; // initial hit + chains
+            int chains[] = { 3, 5, 7 };
             int stunPct = (w->level >= 3) ? 20 : 0;
+            int evolved = w->evolved;
 
-            // Find nearest enemy to fire initial bolt at
+            // Storm Cage: more chains, longer visual, higher damage, guaranteed stun
+            float dmgVal = evolved ? 3.0f : clDmg[lv];
+            int chainCount = evolved ? 10 : chains[lv];
+            int evStunPct = evolved ? 40 : stunPct;
+            int chainLife = evolved ? 15 : 3; // persistent fences
+
+            // Find nearest enemy
             float bestDist = 10000.0f;
             int bestIdx = -1;
             for (int j = 0; j < enemyCount; j++) {
@@ -754,29 +972,28 @@ void weapons_fire_all(void)
             }
 
             if (bestIdx >= 0) {
-                // Visual arc from player to first target
                 ChainVisual* cv = &chainVisuals[chainVisualIdx];
                 cv->x1 = player.x;
                 cv->y1 = player.y;
                 cv->x2 = enemies[bestIdx].x;
                 cv->y2 = enemies[bestIdx].y;
-                cv->life = 3;
+                cv->life = chainLife;
                 chainVisualIdx = (chainVisualIdx + 1) % MAX_CHAIN_VISUALS;
 
-                enemy_damage(bestIdx, clDmg[lv]);
+                enemy_damage(bestIdx, dmgVal);
                 entities_spawn_particles(enemies[bestIdx].x, enemies[bestIdx].y, 3, 0);
 
-                if (stunPct > 0 && enemies[bestIdx].alive && rng_range(1, 100) <= stunPct) {
-                    enemies[bestIdx].stunTimer = 10;
+                if (evStunPct > 0 && enemies[bestIdx].alive && rng_range(1, 100) <= evStunPct) {
+                    enemies[bestIdx].stunTimer = evolved ? 30 : 10;
                 }
 
-                // Chain to more enemies
                 if (enemies[bestIdx].alive) {
-                    weapons_fire_chain_at(enemies[bestIdx].x, enemies[bestIdx].y, clDmg[lv], chains[lv] - 1, stunPct, bestIdx);
+                    weapons_fire_chain_at(enemies[bestIdx].x, enemies[bestIdx].y, dmgVal, chainCount - 1, evStunPct, bestIdx);
                 }
 
-                sound_play_weapon(800.0f);
-                game_trigger_shake(1);
+                sound_play_weapon(evolved ? 900.0f : 800.0f);
+                game_trigger_shake(evolved ? 2 : 1);
+                entities_spawn_fx(player.x, player.y, 1, 1);
             }
             break;
         }
@@ -816,31 +1033,51 @@ void weapons_fire_all(void)
 
         case WEAPON_DEPTH_CHARGE:
         {
-            int lv = w->level - 1;
-            float dcDmg[] = { 3.0f, 4.0f, 5.0f };
-            float dcRadius[] = { 35.0f, 40.0f, 45.0f };
-            int mineCount[] = { 1, 2, 3 };
-            int slowLife = (w->level >= 3) ? 60 : 0;
-            float slowFact = (w->level >= 3) ? 0.5f : 0.0f;
-
-            float baseAngle = atan2f(player.aimDy, player.aimDx);
-            float spawnDist = 60.0f;
-            float spreadAngle = 0.35f; // ~20 degrees
-
-            for (int m = 0; m < mineCount[lv]; m++) {
-                float angle = baseAngle;
-                if (mineCount[lv] > 1) {
-                    angle += (m - (mineCount[lv] - 1) * 0.5f) * spreadAngle;
+            if (w->evolved) {
+                // Kraken's Clutch: 5 mines in a ring, root enemies, chain-detonate
+                float dmgVal = 7.0f;
+                float blastR = 55.0f;
+                float baseAngle = rng_float() * PI_F * 2.0f;
+                float spawnDist = 55.0f;
+                for (int m = 0; m < 5; m++) {
+                    float angle = baseAngle + m * (2.0f * PI_F / 5.0f);
+                    float mx = player.x + cosf(angle) * spawnDist;
+                    float my = player.y + sinf(angle) * spawnDist;
+                    int s = game.arenaShrink;
+                    mx = clampf(mx, (float)(s + 10), (float)(MAP_W - s - 10));
+                    my = clampf(my, (float)(s + 10), (float)(MAP_H - s - 10));
+                    spawn_depth_charge(mx, my, dmgVal, blastR, 0.5f, 45);
                 }
-                float mx = player.x + cosf(angle) * spawnDist;
-                float my = player.y + sinf(angle) * spawnDist;
-                int s = game.arenaShrink;
-                mx = clampf(mx, (float)(s + 10), (float)(MAP_W - s - 10));
-                my = clampf(my, (float)(s + 10), (float)(MAP_H - s - 10));
-                spawn_depth_charge(mx, my, dcDmg[lv], dcRadius[lv], slowFact, slowLife);
-            }
+                sound_play_weapon(220.0f);
+                game_trigger_shake(2);
+                entities_spawn_particles(player.x, player.y, 6, 1);
+            } else {
+                int lv = w->level - 1;
+                float dcDmg[] = { 3.0f, 4.0f, 5.0f };
+                float dcRadius[] = { 35.0f, 40.0f, 45.0f };
+                int mineCount[] = { 1, 2, 3 };
+                int slowLife = (w->level >= 3) ? 60 : 0;
+                float slowFact = (w->level >= 3) ? 0.5f : 0.0f;
 
-            sound_play_weapon(250.0f);
+                float baseAngle = atan2f(player.aimDy, player.aimDx);
+                float spawnDist = 60.0f;
+                float spreadAngle = 0.35f; // ~20 degrees
+
+                for (int m = 0; m < mineCount[lv]; m++) {
+                    float angle = baseAngle;
+                    if (mineCount[lv] > 1) {
+                        angle += (m - (mineCount[lv] - 1) * 0.5f) * spreadAngle;
+                    }
+                    float mx = player.x + cosf(angle) * spawnDist;
+                    float my = player.y + sinf(angle) * spawnDist;
+                    int s = game.arenaShrink;
+                    mx = clampf(mx, (float)(s + 10), (float)(MAP_W - s - 10));
+                    my = clampf(my, (float)(s + 10), (float)(MAP_H - s - 10));
+                    spawn_depth_charge(mx, my, dcDmg[lv], dcRadius[lv], slowFact, slowLife);
+                }
+
+                sound_play_weapon(250.0f);
+            }
             break;
         }
 

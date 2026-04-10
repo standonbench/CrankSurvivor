@@ -11,11 +11,26 @@ uint32_t _rng_state = 1;
 
 const TierDef TIERS[TIER_COUNT] = {
     {   0.0f, "9 PM"       },
-    {  45.0f, "10:30 PM"   },
-    { 105.0f, "Midnight"   },
-    { 195.0f, "2 AM ?"     },
-    { 315.0f, "4 AM ??"    },
+    {  90.0f, "10:30 PM"   },   // 1:30 — before Boss 1 at 3:00
+    { 210.0f, "Midnight"   },   // 3:30 — after Boss 1
+    { 390.0f, "2 AM ?"     },   // 6:30 — after Boss 2
+    { 420.0f, "4 AM ??"    },   // 7:00 — before final boss
 };
+
+// ---------------------------------------------------------------------------
+// System menu: Quit Run callback
+// ---------------------------------------------------------------------------
+static void menu_quit_run(void* userdata)
+{
+    (void)userdata;
+    if (game.state == STATE_PLAYING || game.state == STATE_UPGRADE ||
+        game.state == STATE_CRATE_REWARD || game.state == STATE_CUTSCENE) {
+        save_end_run();
+        save_update_high_score();
+        game.state = STATE_TITLE;
+        game.menuSelection = 1;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Init
@@ -42,6 +57,8 @@ void game_init(void)
 
     game.fontLarge = pd->graphics->loadFont("Roobert-20-Medium", &fontErr);
     if (!game.fontLarge) DLOG("Failed to load large font: %s", fontErr ? fontErr : "unknown");
+
+    pd->system->addMenuItem("Quit Run", menu_quit_run, NULL);
 
     DLOG("Game initialized. DEBUG_BUILD=%d", DEBUG_BUILD);
 }
@@ -108,18 +125,56 @@ void game_start(void)
     game.slowMotionTimer = 0;
     memset(game.dmgNumbers, 0, sizeof(game.dmgNumbers));
 
+    boss_init();
+    game.corruptedActive = 0;
+    game.fogActive = 0;
+    game.fogShrinkExtra = 0;
+    game.rerollsLeft = 0;
+    game.runKills = 0;
+    game.runSalvage = 0;
+
+    // Relic fields
+    game.relicFathomCharged = 0;
+    game.relicBellTimer = 0.0f;
+    game.relicMaxWeapons = MAX_WEAPONS;
+    game.lastActiveSynergyCount = -1;
+    game.xpBarDisplayFill = 0;
+    game.tierWarningTimer = 0;
+    game.tierWarningNextTier = 0;
+    game.upgradeOpenTimer = 0;
+
     player_init();
+
+    // Apply keeper modifiers
+    {
+        const KeeperDef* k = &KEEPER_DEFS[game.selectedKeeper];
+        player.moveSpeed *= k->speedMult;
+        player.maxHp += k->hpBonus;
+        if (player.maxHp < 1) player.maxHp = 1;
+        player.hp = player.maxHp;
+    }
+
+    // Apply relic effects (after keeper modifiers)
+    relic_apply(game.activeRelic);
+
     rendering_init(); // rebuild background
 
-    // Give starter weapon: Signal Beam
-    player.weapons[0].id = WEAPON_SIGNAL_BEAM;
-    player.weapons[0].level = 1;
-    player.weapons[0].cooldownMs = 700;
-    player.weapons[0].lastFiredMs = 0;
-    player.weaponCount = 1;
+    // Give starter weapon (from keeper or player selection)
+    {
+        WeaponId starter = (WeaponId)game.selectedStarterWeapon;
+        player.weapons[0].id = starter;
+        player.weapons[0].level = 1;
+        player.weapons[0].cooldownMs = weapon_get_cooldown(starter, 1);
+        player.weapons[0].lastFiredMs = 0;
+        player.weaponCount = 1;
+        game.unlockedWeapons[starter] = 1;
+    }
 
-    // Mark as unlocked
-    game.unlockedWeapons[WEAPON_SIGNAL_BEAM] = 1;
+    // Announce relic at run start (shown briefly during opening cutscene)
+    if (game.activeRelic != RELIC_NONE) {
+        snprintf(game.announceText, sizeof(game.announceText), "%s", relic_get_name(game.activeRelic));
+        game.announceTimer = 90;
+    }
 
     // Opening cutscene (game_start_playing is forward-declared below)
     static const char* openingLines[] = {
@@ -145,7 +200,7 @@ void game_reset_stats(void)
     player.moveSpeed = 1.8f;
     player.maxHp = 5;
     player.hp = 5;
-    player.xpToNext = 100;
+    player.xpToNext = 175;
     player.level = 1;
     player.aimDy = -1.0f; // aim up by default
     player.x = MAP_W / 2.0f;
@@ -200,13 +255,13 @@ int game_get_player_power(void)
 
 float game_get_spawn_interval(void)
 {
-    static const float tierIntervals[] = { 1200, 900, 650, 450, 300 };
+    static const float tierIntervals[] = { 1400, 1500, 1100, 800, 550 };
     int tier = game_get_current_tier_index();
     float base = tierIntervals[tier];
     int power = game_get_player_power();
-    if (power > 8) {
-        base -= (power - 8) * 50.0f;
-        if (base < 150.0f) base = 150.0f;
+    if (power > 10) {
+        base -= (power - 10) * 30.0f;
+        if (base < 300.0f) base = 300.0f;
     }
     return base;
 }
@@ -267,6 +322,7 @@ void game_start_cutscene(const char* lines[], int lineCount,
 // ---------------------------------------------------------------------------
 static void death_cutscene_complete(void)
 {
+    save_end_run();
     game.state = STATE_GAMEOVER;
 }
 
@@ -357,6 +413,29 @@ static void update_tier(void)
         }
 
         DLOG("Tier transition: %s (tier %d)", TIERS[newTier].name, newTier);
+
+        // Reset tier warning when a tier actually fires
+        game.tierWarningTimer = 0;
+    }
+
+    // Tier warning: 15s before next tier transition
+    if (game.tierWarningTimer <= 0) {
+        int nextTier = game.currentTier + 1;
+        if (nextTier < TIER_COUNT) {
+            float warnTime = TIERS[nextTier].time - 15.0f;
+            if (game.gameTime >= warnTime && game.gameTime < TIERS[nextTier].time) {
+                game.tierWarningTimer = 450; // 15s at 30fps
+                game.tierWarningNextTier = nextTier;
+            }
+        }
+    }
+    if (game.tierWarningTimer > 0) {
+        game.tierWarningTimer--;
+        if (game.tierWarningTimer == 300) { // 10s remaining
+            snprintf(game.announceText, sizeof(game.announceText),
+                     "%s APPROACHES", TIERS[game.tierWarningNextTier].name);
+            game.announceTimer = 60;
+        }
     }
 }
 
@@ -365,13 +444,25 @@ static void update_tier(void)
 // ---------------------------------------------------------------------------
 void victory_cutscene_complete(void)
 {
-    save_update_high_score();
+    save_end_run();
+    game.gameOverSelection = 0;
     game.state = STATE_VICTORY;
 }
 
 static void check_victory(void)
 {
-    if (game.gameTime >= VICTORY_TIME && game.state == STATE_PLAYING) {
+    // Victory is now triggered by defeating the final boss (BOSS_SHADOW).
+    // The cutscene is started from boss_update() when the Shadow dies.
+    // Fallback: if timer expires and final boss was already defeated, trigger victory
+    if (game.gameTime >= VICTORY_TIME && game.state == STATE_PLAYING && !game.bossActive) {
+        if (game.bossSpawned[BOSS_SHADOW] && !game.boss.alive) {
+            // Already handled by boss death
+            return;
+        }
+        // If somehow we hit 8 min without the boss being spawned yet, don't auto-win
+        // The boss spawns at 7:30, so this shouldn't happen in normal play
+        if (!game.bossSpawned[BOSS_SHADOW]) return;
+
         static const char* lines[] = {
             "Keeper's Log  --  Dawn",
             "The fog lifts. The glass is clear.",
@@ -391,50 +482,50 @@ static EnemyType pick_enemy_type(void)
     float t = game.gameTime;
     int roll = rng_range(1, 100);
 
-    if (t < 45.0f) {
-        // Tier 0: Creeper only
+    if (t < 60.0f) {
+        // Creeper only — first minute
         return ENEMY_CREEPER;
-    } else if (t < 75.0f) {
-        // +Lamprey (fast, fragile, splits)
-        if (roll <= 70) return ENEMY_CREEPER;
+    } else if (t < 120.0f) {
+        // +Lamprey
+        if (roll <= 65) return ENEMY_CREEPER;
         return ENEMY_LAMPREY;
-    } else if (t < 105.0f) {
-        // +Tendril (strafing lateral pressure)
-        if (roll <= 50) return ENEMY_CREEPER;
-        if (roll <= 75) return ENEMY_LAMPREY;
+    } else if (t < 180.0f) {
+        // +Tendril (before Boss 1)
+        if (roll <= 45) return ENEMY_CREEPER;
+        if (roll <= 70) return ENEMY_LAMPREY;
         return ENEMY_TENDRIL;
-    } else if (t < 150.0f) {
-        // +Wraith (phases through walls)
-        if (roll <= 35) return ENEMY_CREEPER;
-        if (roll <= 55) return ENEMY_LAMPREY;
-        if (roll <= 75) return ENEMY_TENDRIL;
+    } else if (t < 240.0f) {
+        // +Wraith (after Boss 1)
+        if (roll <= 30) return ENEMY_CREEPER;
+        if (roll <= 50) return ENEMY_LAMPREY;
+        if (roll <= 70) return ENEMY_TENDRIL;
         return ENEMY_WRAITH;
-    } else if (t < 195.0f) {
-        // +Bloat (explodes on death)
-        if (roll <= 25) return ENEMY_CREEPER;
-        if (roll <= 40) return ENEMY_LAMPREY;
-        if (roll <= 55) return ENEMY_TENDRIL;
-        if (roll <= 70) return ENEMY_WRAITH;
-        return ENEMY_BLOAT;
-    } else if (t < 255.0f) {
-        // +Abyssal (heavy tank, lunges)
+    } else if (t < 300.0f) {
+        // +Bloat
         if (roll <= 20) return ENEMY_CREEPER;
-        if (roll <= 32) return ENEMY_LAMPREY;
-        if (roll <= 44) return ENEMY_TENDRIL;
-        if (roll <= 56) return ENEMY_WRAITH;
-        if (roll <= 70) return ENEMY_BLOAT;
-        return ENEMY_ABYSSAL;
-    } else if (t < 315.0f) {
-        // +Seer (ranged attacker)
+        if (roll <= 35) return ENEMY_LAMPREY;
+        if (roll <= 50) return ENEMY_TENDRIL;
+        if (roll <= 65) return ENEMY_WRAITH;
+        return ENEMY_BLOAT;
+    } else if (t < 360.0f) {
+        // +Abyssal (before Boss 2)
         if (roll <= 15) return ENEMY_CREEPER;
-        if (roll <= 27) return ENEMY_LAMPREY;
-        if (roll <= 37) return ENEMY_TENDRIL;
-        if (roll <= 49) return ENEMY_WRAITH;
-        if (roll <= 61) return ENEMY_BLOAT;
-        if (roll <= 75) return ENEMY_ABYSSAL;
+        if (roll <= 28) return ENEMY_LAMPREY;
+        if (roll <= 40) return ENEMY_TENDRIL;
+        if (roll <= 52) return ENEMY_WRAITH;
+        if (roll <= 68) return ENEMY_BLOAT;
+        return ENEMY_ABYSSAL;
+    } else if (t < 420.0f) {
+        // +Seer (after Boss 2)
+        if (roll <= 12) return ENEMY_CREEPER;
+        if (roll <= 22) return ENEMY_LAMPREY;
+        if (roll <= 32) return ENEMY_TENDRIL;
+        if (roll <= 44) return ENEMY_WRAITH;
+        if (roll <= 56) return ENEMY_BLOAT;
+        if (roll <= 72) return ENEMY_ABYSSAL;
         return ENEMY_SEER;
     } else {
-        // +Harbinger (summoner/buffer) — full roster
+        // +Harbinger — full roster (final stretch)
         if (roll <= 12) return ENEMY_CREEPER;
         if (roll <= 22) return ENEMY_LAMPREY;
         if (roll <= 32) return ENEMY_TENDRIL;
@@ -486,11 +577,24 @@ static void spawn_enemy(void)
     static const float baseHP[] = { 2, 2, 2, 5, 3, 1, 3, 4 };
     float hp = baseHP[type] * game_get_hp_scale() + game.enemyHPBonus;
 
+    // Drowned Compass: enemies have -30% HP
+    if (game.activeRelic == RELIC_DROWNED_COMPASS) {
+        hp *= 0.7f;
+    }
+
+    // Corrupted enemies: 40% chance after min 6
+    int isCorrupted = (game.corruptedActive && rng_range(1, 100) <= 40);
+    if (isCorrupted) {
+        hp *= 1.5f;
+        finalSpeed *= 1.2f;
+    }
+
     int idx = entities_spawn_enemy(x, y, finalSpeed, type);
     if (idx >= 0) {
         enemies[idx].hp = hp;
         enemies[idx].maxHp = hp;
         enemies[idx].packBoost = 1.0f;
+        enemies[idx].corrupted = isCorrupted ? 1 : 0;
         game.unlockedEnemies[type] = 1;
 
         // Wraith cluster spawn
@@ -504,8 +608,42 @@ static void spawn_enemy(void)
                     enemies[ci].hp = hp;
                     enemies[ci].maxHp = hp;
                     enemies[ci].packBoost = 1.0f;
+                    enemies[ci].corrupted = isCorrupted ? 1 : 0;
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Late-game escalation
+// ---------------------------------------------------------------------------
+static void update_late_game(void)
+{
+    // Corrupted enemies start appearing after Maw boss (min 6)
+    if (!game.corruptedActive && game.gameTime >= 360.0f && game.bossSpawned[BOSS_MAW]) {
+        game.corruptedActive = 1;
+    }
+
+    // "The Fog Rolls In" at min 7 — progressive arena shrink
+    if (!game.fogActive && game.gameTime >= 420.0f) {
+        game.fogActive = 1;
+        game.fogShrinkExtra = 0;
+        snprintf(game.announceText, sizeof(game.announceText), "The Fog Rolls In...");
+        game.announceTimer = 90;
+        game.invertTimer = 5;
+        game_trigger_shake(6);
+        sound_play_shrink();
+    }
+
+    // Progressive fog shrink: +4px every 10s after activation, up to 60px extra
+    if (game.fogActive && game.fogShrinkExtra < 60) {
+        float fogElapsed = game.gameTime - 420.0f;
+        int targetShrink = mini((int)(fogElapsed / 10.0f) * 4, 60);
+        if (targetShrink > game.fogShrinkExtra) {
+            game.fogShrinkExtra = targetShrink;
+            game.arenaShrink += 4;
+            rendering_update_background_shrink();
         }
     }
 }
@@ -517,14 +655,14 @@ static void update_spawning(void)
 
     while (game.spawnAccum >= interval) {
         game.spawnAccum -= interval;
-        int elapsed30s = (int)(game.gameTime / 30.0f);
-        int maxBatch = mini(3, 1 + elapsed30s / 3);
+        int elapsed60s = (int)(game.gameTime / 60.0f);
+        int maxBatch = mini(3, 1 + elapsed60s / 2);
         int count = rng_range(1, maxBatch);
         game.spawnQueue += count;
     }
 
     int spawned = 0;
-    while (game.spawnQueue > 0 && spawned < 3) {
+    while (game.spawnQueue > 0 && spawned < 2) {
         spawn_enemy();
         game.spawnQueue--;
         spawned++;
@@ -588,6 +726,11 @@ void game_update_xp_magnet(void)
             if (game.streakMultiplier > 1.0f) {
                 xpAmount = (int)(xpAmount * game.streakMultiplier);
             }
+            // Keeper's Doom: XP multiplied by (1 + missing HP)
+            if (game.activeRelic == RELIC_KEEPERS_DOOM) {
+                int missing = player.maxHp - player.hp;
+                if (missing > 0) xpAmount = (int)(xpAmount * (1 + missing));
+            }
             player.xp += xpAmount;
 
             if (player.xp >= player.xpToNext) {
@@ -595,9 +738,14 @@ void game_update_xp_magnet(void)
                 player.level++;
                 player.xpToNext = (int)(player.xpToNext * XP_LEVEL_SCALE);
                 entities_spawn_fx(player.x, player.y, 0, 4);
+                entities_spawn_particles(player.x, player.y, 16, 1);
                 sound_play_levelup();
                 game.invertTimer = 1;
                 game.streakFlashTimer = 2;
+                game.levelUpTimer = 18;
+                game.levelUpX = player.x;
+                game.levelUpY = player.y;
+                game.xpBarDisplayFill = 0;
                 game_generate_upgrades();
             }
         } else if (vacuumActive) {
@@ -634,50 +782,129 @@ static const char* passive_descs[] = {
     "All projectiles pierce", "+45px XP magnet radius"
 };
 
-static char upgNameBufs[MAX_UPGRADE_CHOICES][32];
+// ---------------------------------------------------------------------------
+// Evolution recipes: weapon L3 + specific passive = evolution
+// ---------------------------------------------------------------------------
+typedef struct {
+    WeaponId weapon;
+    int requiredPassive;
+    const char* name;
+    const char* desc;
+} EvolutionRecipe;
+
+#define EVOLUTION_COUNT 7
+
+static const EvolutionRecipe EVOLUTIONS[EVOLUTION_COUNT] = {
+    { WEAPON_SIGNAL_BEAM,     PASSIVE_LENS,       "Prismatic Flare",    "3 spread beams + burning trails"   },
+    { WEAPON_TIDE_POOL,       PASSIVE_SEA_LEGS,   "Maelstrom",          "2x radius, pulls enemies inward"   },
+    { WEAPON_HARPOON,         PASSIVE_TIDECALLER, "Leviathan Spine",    "Roots enemies, explodes on unpin"  },
+    { WEAPON_GHOST_LIGHT,     PASSIVE_BARNACLE,   "Wisp Swarm",         "5 detonating wisps"                },
+    { WEAPON_CHAIN_LIGHTNING, PASSIVE_LENS,       "Storm Cage",         "Persistent electric fences"        },
+    { WEAPON_DEPTH_CHARGE,    PASSIVE_OILSKIN,    "Kraken's Clutch",    "Roots + chain detonation"          },
+    { WEAPON_FOGHORN,         PASSIVE_TIDECALLER, "Siren's Wail",       "Pulls enemies in + confuse"        },
+};
+
+// Check if player has the required passive for an evolution
+static int player_has_passive(int passiveId)
+{
+    switch (passiveId) {
+    case PASSIVE_OILSKIN:    return player.oilskinCoat > 0;
+    case PASSIVE_SEA_LEGS:   return player.seaLegs > 0;
+    case PASSIVE_BARNACLE:   return player.saltWardMax > 0;
+    case PASSIVE_LENS:       return player.lighthouseLens;
+    case PASSIVE_TIDECALLER: return player.tidecaller > 0;
+    default: return 0;
+    }
+}
+
+// Find evolution index for a weapon, or -1 if none eligible
+static int find_eligible_evolution(WeaponId wid)
+{
+    for (int i = 0; i < EVOLUTION_COUNT; i++) {
+        if (EVOLUTIONS[i].weapon == wid && player_has_passive(EVOLUTIONS[i].requiredPassive))
+            return i;
+    }
+    return -1;
+}
+
+static char upgNameBufs[MAX_UPGRADE_CHOICES][48];
 
 void game_generate_upgrades(void)
 {
     game.state = STATE_UPGRADE;
     game.selectedUpgrade = 0;
     game.upgradeChoiceCount = 0;
+    game.rerollsLeft = 1; // one crank-reroll per level-up
+    game.upgradeOpenTimer = 8;
 
     int isFirstLevel = (player.level <= 1) || (player.weaponCount <= 1 && player.level <= 3);
 
-    // Build pool: max ~WEAPON_COUNT + WEAPON_COUNT + PASSIVE_COUNT entries
-    typedef struct { int type; int id; } PoolEntry;
-    PoolEntry pool[WEAPON_COUNT * 2 + PASSIVE_COUNT];
-    int poolCount = 0;
-
-    // New weapons
-    if (player.weaponCount < MAX_WEAPONS) {
-        for (int wid = 0; wid < WEAPON_COUNT; wid++) {
-            int has = 0;
-            for (int j = 0; j < player.weaponCount; j++) {
-                if (player.weapons[j].id == wid) { has = 1; break; }
-            }
-            if (!has) {
-                pool[poolCount].type = 0; // new weapon
-                pool[poolCount].id = wid;
-                poolCount++;
+    // Check for eligible evolutions first (guaranteed slot if available)
+    // type 3 = evolution, id = evolution index
+    // Black Pearl blocks evolutions (no passives = no evolution prerequisites)
+    int evolOffered = 0;
+    if (!isFirstLevel && game.activeRelic != RELIC_BLACK_PEARL) {
+        for (int j = 0; j < player.weaponCount; j++) {
+            if (player.weapons[j].level >= 3 && !player.weapons[j].evolved) {
+                int evoIdx = find_eligible_evolution(player.weapons[j].id);
+                if (evoIdx >= 0) {
+                    UpgradeChoice* c = &game.upgradeChoices[game.upgradeChoiceCount];
+                    c->type = 3; // evolution
+                    c->id = evoIdx;
+                    c->isEvolution = 1;
+                    int ci = game.upgradeChoiceCount;
+                    snprintf(upgNameBufs[ci], sizeof(upgNameBufs[ci]),
+                             "EVOLVE: %s", EVOLUTIONS[evoIdx].name);
+                    c->name = upgNameBufs[ci];
+                    c->desc = EVOLUTIONS[evoIdx].desc;
+                    game.upgradeChoiceCount++;
+                    evolOffered = 1;
+                    if (game.upgradeChoiceCount >= MAX_UPGRADE_CHOICES) break;
+                }
             }
         }
     }
 
-    // Weapon upgrades
+    // Build pool: max ~WEAPON_COUNT + WEAPON_COUNT + PASSIVE_COUNT entries
+    typedef struct { int type; int id; } PoolEntry;
+    PoolEntry pool[WEAPON_COUNT * 3 + PASSIVE_COUNT];
+    int poolCount = 0;
+
+    // Weapon upgrades (prioritized — listed multiple times for weighting)
     for (int j = 0; j < player.weaponCount; j++) {
         if (player.weapons[j].level < 3) {
-            pool[poolCount].type = 1; // weapon upgrade
-            pool[poolCount].id = player.weapons[j].id;
-            poolCount++;
+            // Add twice so upgrades are weighted over new weapons
+            pool[poolCount].type = 1; pool[poolCount].id = player.weapons[j].id; poolCount++;
+            pool[poolCount].type = 1; pool[poolCount].id = player.weapons[j].id; poolCount++;
+        }
+    }
+
+    // New weapons (only if player has fewer than 3 weapons, or 25% chance with 3+)
+    // Bone Compass caps at relicMaxWeapons
+    if (player.weaponCount < game.relicMaxWeapons) {
+        int offerNew = (player.weaponCount < 3) || (rng_range(1, 100) <= 25);
+        if (offerNew) {
+            for (int wid = 0; wid < WEAPON_COUNT; wid++) {
+                int has = 0;
+                for (int j = 0; j < player.weaponCount; j++) {
+                    if (player.weapons[j].id == wid) { has = 1; break; }
+                }
+                if (!has) {
+                    pool[poolCount].type = 0; // new weapon
+                    pool[poolCount].id = wid;
+                    poolCount++;
+                }
+            }
         }
     }
 
     // Passives (skip if first level, skip barnacle/lens if already owned)
-    if (!isFirstLevel) {
+    // Black Pearl blocks all passives; Keeper's Doom blocks Oilskin
+    if (!isFirstLevel && game.activeRelic != RELIC_BLACK_PEARL) {
         for (int p = 0; p < PASSIVE_COUNT; p++) {
             if (p == PASSIVE_BARNACLE && player.saltWardMax >= 3) continue;
             if (p == PASSIVE_LENS && player.lighthouseLens) continue;
+            if (p == PASSIVE_OILSKIN && game.activeRelic == RELIC_KEEPERS_DOOM) continue;
             pool[poolCount].type = 2; // passive
             pool[poolCount].id = p;
             poolCount++;
@@ -699,13 +926,15 @@ void game_generate_upgrades(void)
         }
     }
 
-    // Pick up to 3 random from pool
-    int picks = poolCount < 3 ? poolCount : 3;
+    // Pick remaining slots from pool (evolutions already take priority slots)
+    int remaining = MAX_UPGRADE_CHOICES - game.upgradeChoiceCount;
+    int picks = poolCount < remaining ? poolCount : remaining;
     for (int i = 0; i < picks; i++) {
         int idx = rng_range(0, poolCount - 1);
         UpgradeChoice* c = &game.upgradeChoices[game.upgradeChoiceCount];
         c->type = pool[idx].type;
         c->id = pool[idx].id;
+        c->isEvolution = 0;
 
         int ci = game.upgradeChoiceCount; // index for buffer
         if (pool[idx].type == 0) {
@@ -763,11 +992,19 @@ void game_apply_upgrade(int choice)
 
     if (c->type == 0) {
         // New weapon
-        if (player.weaponCount < MAX_WEAPONS) {
+        if (player.weaponCount < game.relicMaxWeapons) {
             Weapon* w = &player.weapons[player.weaponCount];
             w->id = (WeaponId)c->id;
             w->level = 1;
             w->cooldownMs = weapon_get_cooldown(w->id, 1);
+            // Pale Tide: new weapons also get halved cooldown
+            if (game.activeRelic == RELIC_PALE_TIDE && w->cooldownMs > 0) {
+                w->cooldownMs /= 2;
+            }
+            // Drowned Bell: apply +30% cooldown penalty after burst phase
+            if (game.activeRelic == RELIC_DROWNED_BELL && game.relicBellTimer <= 0.0f) {
+                w->cooldownMs = (int)(w->cooldownMs * 1.3f);
+            }
             w->lastFiredMs = 0;
             player.weaponCount++;
             game.unlockedWeapons[c->id] = 1;
@@ -783,6 +1020,10 @@ void game_apply_upgrade(int choice)
                 player.weapons[i].level++;
                 player.weapons[i].cooldownMs = weapon_get_cooldown(
                     player.weapons[i].id, player.weapons[i].level);
+                if (game.activeRelic == RELIC_PALE_TIDE && player.weapons[i].cooldownMs > 0)
+                    player.weapons[i].cooldownMs /= 2;
+                if (game.activeRelic == RELIC_DROWNED_BELL && game.relicBellTimer <= 0.0f)
+                    player.weapons[i].cooldownMs = (int)(player.weapons[i].cooldownMs * 1.3f);
                 break;
             }
         }
@@ -810,6 +1051,22 @@ void game_apply_upgrade(int choice)
             player.tidecaller++;
             break;
         }
+    } else if (c->type == 3) {
+        // Evolution
+        const EvolutionRecipe* evo = &EVOLUTIONS[c->id];
+        for (int i = 0; i < player.weaponCount; i++) {
+            if (player.weapons[i].id == evo->weapon) {
+                player.weapons[i].evolved = 1;
+                // Evolution reduces cooldown by 20%
+                player.weapons[i].cooldownMs = (int)(player.weapons[i].cooldownMs * 0.8f);
+                break;
+            }
+        }
+        game.invertTimer = 4;
+        game_trigger_shake(3);
+        entities_spawn_particles(player.x, player.y, 12, 1);
+        snprintf(game.announceText, sizeof(game.announceText), "%s!", evo->name);
+        game.announceTimer = 60;
     }
 
     sound_play_confirm();
@@ -902,16 +1159,16 @@ void game_update_crates(void)
         }
     }
 
-    // Spawn logic — first crate at 30s
-    if (!game.firstCrateSpawned && game.gameTime >= 30.0f) {
+    // Spawn logic — first crate at 60s, then every 50s with 35% chance
+    if (!game.firstCrateSpawned && game.gameTime >= 60.0f) {
         game.firstCrateSpawned = 1;
         spawn_crate();
         game.lastCrateCheckTime = game.gameTime;
         return;
     }
-    if (game.gameTime - game.lastCrateCheckTime >= 30.0f) {
+    if (game.gameTime - game.lastCrateCheckTime >= 50.0f) {
         game.lastCrateCheckTime = game.gameTime;
-        if (rng_range(1, 100) <= 40) {
+        if (rng_range(1, 100) <= 35) {
             spawn_crate();
         }
     }
@@ -1090,22 +1347,69 @@ int update(void* userdata)
     {
     case STATE_TITLE:
         ui_draw_title();
+        // Navigation: 1=Start, grid: 2=Keeper 3=Armory 4=Bestiary 5=Logbook
+        //             row0: [Start Game]
+        //             row1: [2:Keeper]  [3:Armory]
+        //             row2: [4:Bestiary] [5:Logbook]
         if (pushed & kButtonUp) {
-            game.menuSelection = maxi(1, game.menuSelection - 1);
+            if (game.menuSelection == 1) { /* already top */ }
+            else if (game.menuSelection <= 3) game.menuSelection = 1;
+            else game.menuSelection -= 2; // row2 -> row1
             sound_play_menu();
         } else if (pushed & kButtonDown) {
-            game.menuSelection = mini(3, game.menuSelection + 1);
+            if (game.menuSelection == 1) game.menuSelection = 2;
+            else if (game.menuSelection <= 3) game.menuSelection += 2; // row1 -> row2
+            // else already bottom row
             sound_play_menu();
+        } else if (pushed & kButtonLeft) {
+            if (game.menuSelection == 3) { game.menuSelection = 2; sound_play_menu(); }
+            else if (game.menuSelection == 5) { game.menuSelection = 4; sound_play_menu(); }
+        } else if (pushed & kButtonRight) {
+            if (game.menuSelection == 2) { game.menuSelection = 3; sound_play_menu(); }
+            else if (game.menuSelection == 4) { game.menuSelection = 5; sound_play_menu(); }
         } else if (pushed & kButtonA) {
             if (game.menuSelection == 1) {
-                game_start();
+                relic_init();
+                game.relicCrankAccum = 0.0f;
+                game.relicSelectIndex = 0;
+                game.activeRelic = RELIC_NONE;
+                game.state = STATE_RELIC_SELECT;
             } else if (game.menuSelection == 2) {
+                game.keeperSelection = game.selectedKeeper;
+                game.state = STATE_KEEPER_SELECT;
+            } else if (game.menuSelection == 3) {
                 game.armorySelection = 1;
                 game.state = STATE_ARMORY;
-            } else {
+            } else if (game.menuSelection == 4) {
                 game.bestiarySelection = 1;
                 game.state = STATE_BESTIARY;
+            } else {
+                game.logbookSelection = 0;
+                game.state = STATE_LOGBOOK;
             }
+        }
+        break;
+
+    case STATE_RELIC_SELECT:
+        ui_draw_relic_select();
+        {
+            float cc = pd->system->getCrankChange();
+            game.relicCrankAccum += cc;
+            while (game.relicCrankAccum >= 120.0f) {
+                game.relicCrankAccum -= 120.0f;
+                game.relicSelectIndex = (game.relicSelectIndex + 1) % 3;
+                sound_play_menu();
+            }
+            while (game.relicCrankAccum <= -120.0f) {
+                game.relicCrankAccum += 120.0f;
+                game.relicSelectIndex = (game.relicSelectIndex + 2) % 3;
+                sound_play_menu();
+            }
+        }
+        if (pushed & kButtonA) {
+            game.activeRelic = game.relicOptions[game.relicSelectIndex];
+            sound_play_confirm();
+            game_start();
         }
         break;
 
@@ -1113,9 +1417,15 @@ int update(void* userdata)
     {
         game.gameTime += FRAME_MS / 1000.0f;
 
-        update_spawning();
+        boss_check_spawn();
+        if (!game.bossActive) {
+            update_spawning();
+        }
+        boss_update();
         update_tier();
+        update_late_game();
         check_victory();
+        relic_update();
 
         if (game.cooldownBuffTimer > 0) game.cooldownBuffTimer--;
 
@@ -1143,11 +1453,11 @@ int update(void* userdata)
             if (game.streakTimer <= 0) game.streakMultiplier = 1.0f;
         }
 
-        // Speed surge events
+        // Speed surge events (every 90s, 15% chance)
         game.surgeCheckTimer += FRAME_MS / 1000.0f;
-        if (game.surgeCheckTimer >= 60.0f) {
-            game.surgeCheckTimer -= 60.0f;
-            if (rng_range(1, 100) <= 20) {
+        if (game.surgeCheckTimer >= 90.0f) {
+            game.surgeCheckTimer -= 90.0f;
+            if (rng_range(1, 100) <= 15) {
                 game.surgeOverlayTimer = 60;
                 game.surgeTimer = 150;
                 game.enemySpeedMult = 1.5f;
@@ -1215,7 +1525,11 @@ int update(void* userdata)
             pd->display->setInverted(0);
             pd->display->setMosaic(0, 0);
             if (game.gameOverSelection == 0) {
-                game_start();
+                relic_init();
+                game.relicCrankAccum = 0.0f;
+                game.relicSelectIndex = 0;
+                game.activeRelic = RELIC_NONE;
+                game.state = STATE_RELIC_SELECT;
             } else {
                 game.gameOverSelection = 0;
                 game.state = STATE_TITLE;
@@ -1225,15 +1539,27 @@ int update(void* userdata)
 
     case STATE_VICTORY:
         ui_draw_victory();
-        if (pushed & kButtonA) {
+        if (pushed & kButtonLeft) game.gameOverSelection = 0;
+        else if (pushed & kButtonRight) game.gameOverSelection = 1;
+        else if (pushed & kButtonA) {
             save_update_high_score();
             pd->display->setInverted(0);
             pd->display->setMosaic(0, 0);
-            game_start();
+            if (game.gameOverSelection == 0) {
+                relic_init();
+                game.relicCrankAccum = 0.0f;
+                game.relicSelectIndex = 0;
+                game.activeRelic = RELIC_NONE;
+                game.state = STATE_RELIC_SELECT;
+            } else {
+                game.gameOverSelection = 0;
+                game.state = STATE_TITLE;
+            }
         }
         break;
 
     case STATE_UPGRADE:
+        if (game.upgradeOpenTimer > 0) game.upgradeOpenTimer--;
         ui_draw_upgrade_screen();
         if (pushed & kButtonUp) {
             game.selectedUpgrade = maxi(0, game.selectedUpgrade - 1);
@@ -1243,6 +1569,20 @@ int update(void* userdata)
             sound_play_menu();
         } else if (pushed & kButtonA) {
             game_apply_upgrade(game.selectedUpgrade);
+        }
+        // Crank reroll: full rotation rerolls choices (1x per level-up)
+        if (game.rerollsLeft > 0) {
+            float crankChange = pd->system->getCrankChange();
+            static float crankAccum = 0;
+            crankAccum += crankChange;
+            if (crankAccum >= 360.0f || crankAccum <= -360.0f) {
+                crankAccum = 0;
+                int rerollsAfter = game.rerollsLeft - 1;
+                game_generate_upgrades();
+                game.rerollsLeft = rerollsAfter;
+                sound_play_confirm();
+                game_trigger_shake(2);
+            }
         }
         break;
 
@@ -1291,6 +1631,44 @@ int update(void* userdata)
         if (pushed & kButtonUp) game.bestiarySelection = maxi(1, game.bestiarySelection - 1);
         else if (pushed & kButtonDown) game.bestiarySelection = mini(ENEMY_TYPE_COUNT, game.bestiarySelection + 1);
         else if (pushed & kButtonB) game.state = STATE_TITLE;
+        break;
+
+    case STATE_LOGBOOK:
+        ui_draw_logbook();
+        if (pushed & kButtonB) game.state = STATE_TITLE;
+        break;
+
+    case STATE_KEEPER_SELECT:
+        ui_draw_keeper_select();
+        if (pushed & kButtonUp) {
+            game.keeperSelection = maxi(0, game.keeperSelection - 1);
+            sound_play_menu();
+        } else if (pushed & kButtonDown) {
+            game.keeperSelection = mini(KEEPER_COUNT - 1, game.keeperSelection + 1);
+            sound_play_menu();
+        } else if (pushed & kButtonA) {
+            // Select keeper if unlocked
+            if (game.keeperUnlocked[game.keeperSelection]) {
+                game.selectedKeeper = (uint8_t)game.keeperSelection;
+                game.selectedStarterWeapon = (uint8_t)KEEPER_DEFS[game.keeperSelection].starterWeapon;
+                sound_play_confirm();
+                save_write();
+                game.state = STATE_TITLE;
+            } else {
+                // Try to purchase with Salvage
+                int cost = KEEPER_DEFS[game.keeperSelection].unlockCost;
+                if (save_try_purchase(cost)) {
+                    game.keeperUnlocked[game.keeperSelection] = 1;
+                    game.selectedKeeper = (uint8_t)game.keeperSelection;
+                    game.selectedStarterWeapon = (uint8_t)KEEPER_DEFS[game.keeperSelection].starterWeapon;
+                    sound_play_levelup();
+                    save_write();
+                    game.state = STATE_TITLE;
+                }
+            }
+        } else if (pushed & kButtonB) {
+            game.state = STATE_TITLE;
+        }
         break;
     }
 

@@ -124,6 +124,15 @@ void player_take_damage(void)
     }
 
     int dmg = player.cursedTimer > 0 ? 2 : 1;
+    // Cursed Lantern: take 1.5x damage
+    if (game.activeRelic == RELIC_CURSED_LANTERN) {
+        dmg = (int)(dmg * 1.5f + 0.5f);
+        if (dmg < 1) dmg = 1;
+    }
+    // Fathom Debt: taking damage charges next shot
+    if (game.activeRelic == RELIC_FATHOM_DEBT) {
+        game.relicFathomCharged = 1;
+    }
     player.hp -= dmg;
     player.invulnUntil = now + (INVULN_FRAMES * FRAME_MS);
     game_trigger_shake(2);
@@ -132,7 +141,9 @@ void player_take_damage(void)
 
     // Low HP warning: slow-mo when dropping to 1 HP
     if (player.hp == 1) {
-        game.slowMotionTimer = 6;
+        game.slowMotionTimer = 20;
+        snprintf(game.announceText, sizeof(game.announceText), "LAST STAND!");
+        game.announceTimer = 30;
     }
 
     if (player.hp <= 0) {

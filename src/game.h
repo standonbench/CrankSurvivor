@@ -6,6 +6,7 @@
 #include "pd_api.h"
 #include "debug.h"
 #include "mathutil.h"
+#include "keeper.h"
 
 // ---------------------------------------------------------------------------
 // Global Playdate API pointer (set once in eventHandler)
@@ -48,7 +49,7 @@ extern PlaydateAPI* pd;
 #define FRAME_MS           33    // ~30fps
 #define MAX_WEAPONS         6
 #define VICTORY_TIME      480.0f // 8 minutes
-#define XP_LEVEL_SCALE     1.35f
+#define XP_LEVEL_SCALE     1.42f
 
 // ---------------------------------------------------------------------------
 // Entity pool sizes
@@ -87,8 +88,37 @@ typedef enum {
     STATE_CRATE_REWARD,
     STATE_VICTORY,
     STATE_ARMORY,
-    STATE_BESTIARY
+    STATE_BESTIARY,
+    STATE_LOGBOOK,
+    STATE_KEEPER_SELECT,
+    STATE_RELIC_SELECT
 } GameState;
+
+// ---------------------------------------------------------------------------
+// Relic system
+// ---------------------------------------------------------------------------
+typedef enum {
+    RELIC_NONE = -1,
+    RELIC_CURSED_LANTERN = 0,
+    RELIC_DROWNED_BELL,
+    RELIC_WAILING_CURRENT,
+    RELIC_FATHOM_DEBT,
+    RELIC_BONE_COMPASS,
+    RELIC_TIDEBREAKER,
+    RELIC_DROWNED_COMPASS,
+    RELIC_BLACK_PEARL,
+    RELIC_PALE_TIDE,
+    RELIC_KEEPERS_DOOM,
+    RELIC_COUNT
+} RelicId;
+
+typedef struct {
+    const char* name;
+    const char* desc;
+    const char* logEntry;
+} RelicDef;
+
+extern const RelicDef RELIC_DEFS[RELIC_COUNT];
 
 typedef enum {
     ENEMY_CREEPER = 0,   // horror1
@@ -152,6 +182,7 @@ typedef struct {
     int8_t lunging;
     int8_t charging;
     uint32_t lastHitByTidepool;
+    uint8_t corrupted;       // late-game: inverted sprite, +HP/speed
 } Enemy;
 
 typedef struct {
@@ -293,6 +324,7 @@ typedef struct {
     int level;           // 1-3
     int cooldownMs;
     uint32_t lastFiredMs;
+    uint8_t evolved;     // 1 = weapon has evolved form
 } Weapon;
 
 // ---------------------------------------------------------------------------
@@ -338,6 +370,33 @@ typedef struct {
 } AreaVisual;
 
 // ---------------------------------------------------------------------------
+// Boss
+// ---------------------------------------------------------------------------
+typedef enum {
+    BOSS_NONE = -1,
+    BOSS_CAPTAIN = 0,    // Drowned Captain (min 3)
+    BOSS_MAW,            // Abyssal Maw (min 6)
+    BOSS_SHADOW,         // Lighthouse's Shadow (min 7:30)
+    BOSS_TYPE_COUNT
+} BossType;
+
+typedef struct {
+    float x, y;
+    float vx, vy;
+    float hp, maxHp;
+    float speed;
+    BossType type;
+    int phase;           // multi-phase behavior
+    int alive;
+    int flashTimer;
+    int attackTimer;     // cooldown between attacks
+    int summonTimer;     // cooldown for summon ability
+    int stateTimer;      // general-purpose (charge windup, etc.)
+    float stateAngle;    // charge direction, etc.
+    int invulnFrames;    // brief invuln during phase transitions
+} Boss;
+
+// ---------------------------------------------------------------------------
 // Cutscene data
 // ---------------------------------------------------------------------------
 #define CUTSCENE_MAX_LINES 8
@@ -355,10 +414,11 @@ typedef struct {
 // Upgrade choice
 // ---------------------------------------------------------------------------
 typedef struct {
-    int type;    // 0 = new weapon, 1 = weapon upgrade, 2 = passive
+    int type;    // 0 = new weapon, 1 = weapon upgrade, 2 = passive, 3 = evolution
     int id;      // weapon id or passive index
     const char* name;
     const char* desc;
+    uint8_t isEvolution;
 } UpgradeChoice;
 
 #define MAX_UPGRADE_CHOICES 3
@@ -480,9 +540,63 @@ typedef struct {
     // Bestiary selection (separate from armorySelection)
     int bestiarySelection;
 
+    // Meta-progression
+    uint32_t totalSalvage;
+    uint32_t spentSalvage;
+    uint32_t totalRuns;
+    uint32_t totalKills;
+    uint32_t bestTimeMs;
+    uint32_t killsPerEnemy[ENEMY_TYPE_COUNT];
+    uint32_t killsPerWeapon[WEAPON_COUNT];
+    uint8_t  keeperUnlocked[KEEPER_COUNT];
+    uint8_t  weaponStartUnlocked[WEAPON_COUNT]; // can start run with this weapon
+    uint8_t  selectedKeeper;
+    uint8_t  selectedStarterWeapon;
+    int      runKills;      // kills this run (for Salvage calc)
+    int      runSalvage;    // Salvage earned this run (shown on game over)
+    int      logbookSelection;
+    int      keeperSelection;
+
     // Slow-motion timer (crate drama)
     int slowMotionTimer;
 
+    // Juice effects
+    int levelUpTimer;         // expanding ring frames remaining
+    float levelUpX, levelUpY; // center of level-up ring
+
+    // Boss system
+    Boss boss;
+    int bossSpawned[BOSS_TYPE_COUNT]; // tracks which bosses have been triggered
+    int bossActive;                   // 1 = boss fight in progress
+    int bossEntranceTimer;            // entrance FX countdown
+
+    // Late-game escalation
+    int corruptedActive;              // 1 = corrupted enemies can spawn (post min 6)
+    int fogActive;                    // 1 = fog boundary active (min 7)
+    int fogShrinkExtra;               // additional arena shrink from fog
+    int rerollsLeft;                  // crank reroll count for current upgrade screen
+
+    // Relic system
+    RelicId activeRelic;
+    int     relicSelectIndex;
+    RelicId relicOptions[3];
+    float   relicCrankAccum;
+    int     relicFathomCharged;
+    float   relicBellTimer;
+    int     relicMaxWeapons;
+
+    // Upgrade screen animation
+    int upgradeOpenTimer;
+
+    // Synergy notification
+    int lastActiveSynergyCount;
+
+    // XP bar animation
+    int xpBarDisplayFill;
+
+    // Tier warning
+    int tierWarningTimer;
+    int tierWarningNextTier;
 
     // Bold font for UI
     LCDFont* fontBold;
@@ -521,6 +635,14 @@ extern int fxIdx;
 // ---------------------------------------------------------------------------
 // Function declarations (by file)
 // ---------------------------------------------------------------------------
+
+// relic.c
+void relic_init(void);
+void relic_apply(RelicId id);
+void relic_update(void);
+void ui_draw_relic_select(void);
+const char* relic_get_name(RelicId id);
+const char* relic_get_desc(RelicId id);
 
 // game.c
 int update(void* userdata);
@@ -611,6 +733,8 @@ void ui_draw_cutscene(void);
 void ui_draw_crate_reward(void);
 void ui_draw_armory(void);
 void ui_draw_bestiary(void);
+void ui_draw_logbook(void);
+void ui_draw_keeper_select(void);
 void ui_draw_tier_announcement(void);
 void ui_draw_centered_text(const char* text, int y);
 void ui_draw_opening_scene(void);
@@ -671,9 +795,31 @@ void sound_play_streak(void);
 void sound_play_surge(void);
 void sound_play_tier(void);
 
+// boss.c
+void boss_init(void);
+void boss_check_spawn(void);
+void boss_update(void);
+void boss_render(int cx, int cy);
+void boss_render_health_bar(void);
+void boss_damage(float amount);
+
 // save.c
 void save_load(void);
 void save_write(void);
 void save_update_high_score(void);
+void save_end_run(void);    // calculate Salvage, update lifetime stats, persist
+int  save_get_salvage(void); // available Salvage (total - spent)
+int  save_try_purchase(int cost); // spend Salvage if affordable, returns 1 on success
+
+void boss_render_health_bar(void);
+void boss_damage(float amount);
+
+// save.c
+void save_load(void);
+void save_write(void);
+void save_update_high_score(void);
+void save_end_run(void);    // calculate Salvage, update lifetime stats, persist
+int  save_get_salvage(void); // available Salvage (total - spent)
+int  save_try_purchase(int cost); // spend Salvage if affordable, returns 1 on success
 
 #endif // GAME_H

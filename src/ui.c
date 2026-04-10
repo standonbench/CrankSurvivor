@@ -133,37 +133,90 @@ void ui_draw_title(void)
         }
     }
 
-    // Menu options — large buttons for readability
-    const char* options[] = { "Start Game", "Armory", "Bestiary" };
+    // --- Menu layout ---
+    // Row 0: "Start Game" (prominent boxed button)
+    // Row 1: [Keeper]   [Armory]     (2-column grid)
+    // Row 2: [Bestiary] [Logbook]    (2-column grid)
     if (game.fontBold) pd->graphics->setFont(game.fontBold);
-    int btnW = 160, btnH = 26, startY = 152, spacing = 30;
-    for (int i = 0; i < 3; i++) {
-        int y = startY + i * spacing;
+
+    // Start Game button (wide, prominent)
+    {
+        int btnW = 150, btnH = 22;
         int bx = (SCREEN_W - btnW) / 2;
-        int tw = pd->graphics->getTextWidth(game.fontBold, options[i], strlen(options[i]), kASCIIEncoding, 0);
+        int by = 154;
+        const char* label = "Start Game";
+        int tw = pd->graphics->getTextWidth(game.fontBold, label, strlen(label), kASCIIEncoding, 0);
         int textX = bx + (btnW - tw) / 2;
-        int textY = y + (btnH - 16) / 2 + 1;
-        if (i + 1 == game.menuSelection) {
-            GFX_FILL(bx, y, btnW, btnH, kColorWhite);
+        int textY = by + 3;
+        if (game.menuSelection == 1) {
+            GFX_FILL(bx, by, btnW, btnH, kColorWhite);
             pd->graphics->setDrawMode(kDrawModeFillBlack);
-            pd->graphics->drawText(options[i], strlen(options[i]), kASCIIEncoding, textX, textY);
+            pd->graphics->drawText(label, strlen(label), kASCIIEncoding, textX, textY);
             pd->graphics->setDrawMode(kDrawModeFillWhite);
-            // Selection arrows
-            GFX_FILL(bx - 10, y + btnH / 2 - 3, 4, 6, kColorWhite);
-            GFX_FILL(bx + btnW + 6, y + btnH / 2 - 3, 4, 6, kColorWhite);
+            GFX_FILL(bx - 10, by + btnH / 2 - 3, 4, 6, kColorWhite);
+            GFX_FILL(bx + btnW + 6, by + btnH / 2 - 3, 4, 6, kColorWhite);
         } else {
-            GFX_RECT(bx, y, btnW, btnH, kColorWhite);
-            pd->graphics->drawText(options[i], strlen(options[i]), kASCIIEncoding, textX, textY);
+            GFX_RECT(bx, by, btnW, btnH, kColorWhite);
+            pd->graphics->drawText(label, strlen(label), kASCIIEncoding, textX, textY);
         }
     }
+
+    // 2x2 grid of secondary options
+    {
+        const char* gridLabels[] = { "Keeper", "Armory", "Bestiary", "Logbook" };
+        int gridMenuIds[] = { 2, 3, 4, 5 }; // menuSelection values
+        int cellW = 90, cellH = 18;
+        int gridX = (SCREEN_W - cellW * 2 - 10) / 2; // 10px gap between columns
+        int gridY = 182;
+        int rowGap = 22;
+        int colGap = cellW + 10;
+
+        for (int i = 0; i < 4; i++) {
+            int col = i % 2;
+            int row = i / 2;
+            int cx = gridX + col * colGap;
+            int cy = gridY + row * rowGap;
+            const char* label = gridLabels[i];
+            int tw = pd->graphics->getTextWidth(game.fontBold, label, strlen(label), kASCIIEncoding, 0);
+            int textX = cx + (cellW - tw) / 2;
+            int textY = cy + 1;
+
+            if (game.menuSelection == gridMenuIds[i]) {
+                GFX_FILL(cx, cy, cellW, cellH, kColorWhite);
+                pd->graphics->setDrawMode(kDrawModeFillBlack);
+                pd->graphics->drawText(label, strlen(label), kASCIIEncoding, textX, textY);
+                pd->graphics->setDrawMode(kDrawModeFillWhite);
+            } else {
+                GFX_RECT(cx, cy, cellW, cellH, kColorWhite);
+                pd->graphics->drawText(label, strlen(label), kASCIIEncoding, textX, textY);
+            }
+        }
+    }
+
     if (game.fontBold) pd->graphics->setFont(NULL);
 
-    // High score (top right)
-    if (game.highScore > 0) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Best: %d", game.highScore);
-        int bw = pd->graphics->getTextWidth(NULL, buf, strlen(buf), kASCIIEncoding, 0);
-        pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, SCREEN_W - bw - 6, 4);
+    // Salvage + Keeper info (top right, small font)
+    {
+        char buf[48];
+        int ty = 4;
+        if (game.highScore > 0) {
+            snprintf(buf, sizeof(buf), "Best: %d", game.highScore);
+            int bw = pd->graphics->getTextWidth(NULL, buf, strlen(buf), kASCIIEncoding, 0);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, SCREEN_W - bw - 6, ty);
+            ty += 12;
+        }
+        int salvage = save_get_salvage();
+        if (salvage > 0 || game.totalRuns > 0) {
+            snprintf(buf, sizeof(buf), "Salvage: %d", salvage);
+            int sw = pd->graphics->getTextWidth(NULL, buf, strlen(buf), kASCIIEncoding, 0);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, SCREEN_W - sw - 6, ty);
+            ty += 12;
+        }
+        if (game.selectedKeeper != KEEPER_DEFAULT) {
+            const KeeperDef* k = &KEEPER_DEFS[game.selectedKeeper];
+            int kw = pd->graphics->getTextWidth(NULL, k->name, strlen(k->name), kASCIIEncoding, 0);
+            pd->graphics->drawText(k->name, strlen(k->name), kASCIIEncoding, SCREEN_W - kw - 6, ty);
+        }
     }
 
     pd->graphics->setDrawMode(kDrawModeCopy);
@@ -206,11 +259,19 @@ void ui_draw_hud(void)
     GFX_FILL(2, SCREEN_H - 24, tw + 4, 18, kColorBlack);
     pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 4, SCREEN_H - 22);
 
-    // XP bar
+    // XP bar (animated fill)
     int barX = 4, barY = SCREEN_H - 6, barW = SCREEN_W - 8, barH = 4;
     GFX_RECT(barX, barY, barW, barH, kColorWhite);
     if (player.xpToNext > 0) {
-        int fill = (player.xp * (barW - 2)) / player.xpToNext;
+        int targetFill = (player.xp * (barW - 2)) / player.xpToNext;
+        // Animate toward target
+        if (game.xpBarDisplayFill < targetFill) {
+            game.xpBarDisplayFill += 8;
+            if (game.xpBarDisplayFill > targetFill) game.xpBarDisplayFill = targetFill;
+        } else if (game.xpBarDisplayFill > targetFill) {
+            game.xpBarDisplayFill = targetFill; // snap back on level-up
+        }
+        int fill = game.xpBarDisplayFill;
         if (fill > 0) {
             int solidW = fill * 7 / 10;
             if (solidW > 0) GFX_FILL(barX + 1, barY + 1, solidW, barH - 2, kColorWhite);
@@ -226,17 +287,27 @@ void ui_draw_hud(void)
         pd->graphics->drawText(game.currentTierName, strlen(game.currentTierName), kASCIIEncoding, SCREEN_W - tnw - 4, 24);
     }
 
-    // Weapon icons + cooldown indicators
+    // Weapon icons + cooldown progress arcs
     {
         uint32_t nowMs = pd->system->getCurrentTimeMilliseconds();
         for (int i = 0; i < player.weaponCount; i++) {
             int ix = SCREEN_W - 18 - i * 16;
+            int cy_icon = 53; // icon center y
             GFX_FILL(ix - 2, 43, 16, 16, kColorBlack);
             LCDBitmap* icon = images_get_weapon_icon(player.weapons[i].id);
             if (icon) pd->graphics->drawBitmap(icon, ix, 45, kBitmapUnflipped);
             uint32_t elapsed = nowMs - player.weapons[i].lastFiredMs;
-            if (elapsed >= (uint32_t)player.weapons[i].cooldownMs) {
-                GFX_FILL(ix + 4, 56, 2, 2, kColorWhite);
+            int cd = player.weapons[i].cooldownMs;
+            if (cd <= 0 || elapsed >= (uint32_t)cd) {
+                // Ready: filled dot
+                GFX_FILL(ix + 3, cy_icon + 3, 4, 4, kColorWhite);
+            } else {
+                // In progress: arc from 270° (top) clockwise to progress angle
+                float pct = (float)elapsed / (float)cd;
+                int endDeg = (int)(270.0f + pct * 360.0f) % 360;
+                pd->graphics->setDrawMode(kDrawModeXOR);
+                pd->graphics->drawEllipse(ix - 1, cy_icon - 5, 14, 10, 1, 270, endDeg, kColorWhite);
+                pd->graphics->setDrawMode(kDrawModeFillWhite);
             }
         }
     }
@@ -261,6 +332,9 @@ void ui_draw_hud(void)
     GFX_FILL(2, 24, tw + 4, 18, kColorBlack);
     pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 4, 26);
     #endif
+
+    // Boss health bar (centered, top)
+    boss_render_health_bar();
 
     if (game.fontBold) pd->graphics->setFont(NULL);
     pd->graphics->setDrawMode(kDrawModeCopy);
@@ -310,13 +384,14 @@ void ui_draw_game_over(void)
     pd->graphics->setDrawMode(kDrawModeFillWhite);
     if (game.fontBold) pd->graphics->setFont(NULL);
 
-    // Stats Box
-    GFX_RECT(30, 56, SCREEN_W - 60, 48, kColorWhite);
+    // Stats Box (taller to include relic line if active)
+    int statsBoxH = (game.activeRelic != RELIC_NONE) ? 64 : 48;
+    GFX_RECT(30, 56, SCREEN_W - 60, statsBoxH, kColorWhite);
 
     char buf[64];
     int mins = (int)game.gameTime / 60;
     int secs = (int)game.gameTime % 60;
-    
+
     // Left column stats
     snprintf(buf, sizeof(buf), "Time: %d:%02d", mins, secs);
     pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 50, 64);
@@ -326,8 +401,14 @@ void ui_draw_game_over(void)
     // Right column stats
     snprintf(buf, sizeof(buf), "Score: %d", game.score);
     pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 220, 64);
-    snprintf(buf, sizeof(buf), "Kills: %d", game.score / 10);
+    snprintf(buf, sizeof(buf), "Kills: %d", game.runKills);
     pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 220, 84);
+
+    // Relic line (if active)
+    if (game.activeRelic != RELIC_NONE) {
+        snprintf(buf, sizeof(buf), "Relic: %s", relic_get_name(game.activeRelic));
+        ui_draw_centered_text(buf, 100);
+    }
 
     // NEW BEST indicator inside stats box if applicable
     if (game.score >= game.highScore && game.score > 0) {
@@ -340,8 +421,14 @@ void ui_draw_game_over(void)
         }
     }
 
+    // Salvage earned this run
+    {
+        snprintf(buf, sizeof(buf), "+%d Salvage", game.runSalvage);
+        ui_draw_centered_text(buf, 108);
+    }
+
     // Weapons (Horizontal Row)
-    ui_draw_centered_text("- Equipment -", 112);
+    ui_draw_centered_text("- Equipment -", 122);
     
     {
         int totalWeapons = player.weaponCount;
@@ -355,17 +442,17 @@ void ui_draw_game_over(void)
             int bx = startX + i * spacing;
 
             // Bounding box
-            GFX_RECT(bx, 132, boxSize, boxSize, kColorWhite);
+            GFX_RECT(bx, 140, boxSize, boxSize, kColorWhite);
 
             // Center 24x24 icon in box
             int iconOff = (boxSize - iconBmp) / 2;
             LCDBitmap* icon = images_get_weapon_icon_large(player.weapons[i].id);
-            if (icon) pd->graphics->drawBitmap(icon, bx + iconOff, 132 + iconOff, kBitmapUnflipped);
+            if (icon) pd->graphics->drawBitmap(icon, bx + iconOff, 140 + iconOff, kBitmapUnflipped);
 
             // Centered level below the box
             snprintf(buf, sizeof(buf), "Lv%d", player.weapons[i].level);
             int tw = pd->graphics->getTextWidth(NULL, buf, strlen(buf), kASCIIEncoding, 0);
-            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, bx + boxSize / 2 - tw / 2, 164);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, bx + boxSize / 2 - tw / 2, 172);
         }
     }
 
@@ -416,81 +503,112 @@ void ui_draw_victory(void)
     GFX_CLEAR(kColorBlack);
     pd->graphics->setDrawMode(kDrawModeFillWhite);
 
-    // Fading stars (fewer as elapsed grows)
-    int elapsed = game.frameCount % 300;
-    int starCount = 25 - (elapsed / 12);
-    if (starCount < 0) starCount = 0;
-    for (int i = 0; i < starCount; i++) {
+    // Sparse twinkling stars
+    for (int i = 0; i < 8; i++) {
         uint32_t seed = (uint32_t)(i * 7919 + 13);
         int sx = (int)(seed % SCREEN_W);
-        int sy = (int)((seed * 31) % (SCREEN_H / 3));
-        GFX_FILL(sx, sy, 1, 1, kColorWhite);
-    }
-
-    // Dithered sunrise rays expanding from center
-    int maxRays = 8;
-    for (int i = 0; i < maxRays; i++) {
-        int rayW = elapsed * 3 - i * 12;
-        if (rayW < 4) continue;
-        if (rayW > SCREEN_W) rayW = SCREEN_W;
-        int ry = SCREEN_H / 2 - 20 + (i - maxRays / 2) * 10;
-        // Dithered ray (every other pixel for softer glow)
-        for (int x = (SCREEN_W - rayW) / 2; x < (SCREEN_W + rayW) / 2; x += 2)
-            GFX_FILL(x + (ry % 2), ry, 1, 2, kColorWhite);
-    }
-
-    // Double-line borders
-    GFX_FILL(30, 20, SCREEN_W - 60, 1, kColorWhite);
-    GFX_FILL(30, 22, SCREEN_W - 60, 1, kColorWhite);
-
-    if (game.fontBold) pd->graphics->setFont(game.fontBold);
-    ui_draw_centered_text("DAWN BREAKS", 30);
-    if (game.fontBold) pd->graphics->setFont(NULL);
-
-    GFX_FILL(30, 46, SCREEN_W - 60, 1, kColorWhite);
-    GFX_FILL(30, 48, SCREEN_W - 60, 1, kColorWhite);
-
-    ui_draw_centered_text("The boundary is sealed.", 60);
-    ui_draw_centered_text("The Keeper endures.", 76);
-
-    // Dashed separator
-    for (int x = 60; x < SCREEN_W - 60; x += 6)
-        GFX_FILL(x, 96, 3, 1, kColorWhite);
-
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Score: %d", game.score);
-    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 80, 110);
-    snprintf(buf, sizeof(buf), "Level: %d", player.level);
-    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 240, 110);
-    int mins = (int)game.gameTime / 60;
-    int secs = (int)game.gameTime % 60;
-    snprintf(buf, sizeof(buf), "Time: %d:%02d", mins, secs);
-    ui_draw_centered_text(buf, 130);
-
-    // Weapons
-    for (int x = 60; x < SCREEN_W - 60; x += 6)
-        GFX_FILL(x, 150, 3, 1, kColorWhite);
-    {
-        int colW = 170;
-        int col0X = (SCREEN_W - colW * 2) / 2;
-        int col1X = col0X + colW;
-        for (int i = 0; i < player.weaponCount && i < 6; i++) {
-            int col = i % 2;
-            int row = i / 2;
-            int wx = (col == 0) ? col0X : col1X;
-            int wy = 160 + row * 18;
-            LCDBitmap* icon = images_get_weapon_icon(player.weapons[i].id);
-            if (icon) pd->graphics->drawBitmap(icon, wx, wy, kBitmapUnflipped);
-            const char* name = weapon_get_name(player.weapons[i].id);
-            snprintf(buf, sizeof(buf), "%s Lv%d", name, player.weapons[i].level);
-            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, wx + 14, wy);
+        int sy = (int)((seed * 31) % 40);
+        int blink = ((game.frameCount + i * 11) / 20) % 3;
+        if (blink == 0) {
+            int sz = (i < 2) ? 2 : 1;
+            GFX_FILL(sx, sy, sz, sz, kColorWhite);
         }
     }
 
-    // Pulsing prompt
-    if ((game.frameCount / 30) % 2 == 0) {
-        ui_draw_centered_text("Press A to play again", 220);
+    // Top border
+    GFX_FILL(0, 0, SCREEN_W, 2, kColorWhite);
+    GFX_FILL(0, 4, SCREEN_W, 1, kColorWhite);
+
+    // Title Background Box
+    GFX_FILL(0, 16, SCREEN_W, 28, kColorWhite);
+    if (game.fontBold) pd->graphics->setFont(game.fontBold);
+    pd->graphics->setDrawMode(kDrawModeFillBlack);
+    ui_draw_centered_text("DAWN BREAKS", 22);
+    pd->graphics->setDrawMode(kDrawModeFillWhite);
+    if (game.fontBold) pd->graphics->setFont(NULL);
+
+    ui_draw_centered_text("The Keeper endures.", 50);
+
+    // Stats Box
+    GFX_RECT(30, 68, SCREEN_W - 60, 48, kColorWhite);
+
+    char buf[64];
+    int mins = (int)game.gameTime / 60;
+    int secs = (int)game.gameTime % 60;
+
+    // Left column stats
+    snprintf(buf, sizeof(buf), "Time: %d:%02d", mins, secs);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 50, 76);
+    snprintf(buf, sizeof(buf), "Level: %d", player.level);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 50, 96);
+
+    // Right column stats
+    snprintf(buf, sizeof(buf), "Score: %d", game.score);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 220, 76);
+    snprintf(buf, sizeof(buf), "Kills: %d", game.runKills);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 220, 96);
+
+    // Salvage earned
+    snprintf(buf, sizeof(buf), "+%d Salvage", game.runSalvage);
+    ui_draw_centered_text(buf, 120);
+
+    // Equipment
+    ui_draw_centered_text("- Equipment -", 136);
+
+    {
+        int totalWeapons = player.weaponCount;
+        int iconBmp = 24;
+        int boxSize = 28;
+        int spacing = 36;
+        int totalW = (totalWeapons - 1) * spacing + boxSize;
+        int startX = (SCREEN_W - totalW) / 2;
+
+        for (int i = 0; i < totalWeapons; i++) {
+            int bx = startX + i * spacing;
+            GFX_RECT(bx, 152, boxSize, boxSize, kColorWhite);
+            int iconOff = (boxSize - iconBmp) / 2;
+            LCDBitmap* icon = images_get_weapon_icon_large(player.weapons[i].id);
+            if (icon) pd->graphics->drawBitmap(icon, bx + iconOff, 152 + iconOff, kBitmapUnflipped);
+            snprintf(buf, sizeof(buf), "Lv%d", player.weapons[i].level);
+            int tw = pd->graphics->getTextWidth(NULL, buf, strlen(buf), kASCIIEncoding, 0);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, bx + boxSize / 2 - tw / 2, 184);
+        }
     }
+
+    // Boxed buttons
+    int btnY = 200;
+    const char* options[] = { "Play Again", "Menu" };
+    int tw0 = pd->graphics->getTextWidth(NULL, options[0], strlen(options[0]), kASCIIEncoding, 0);
+    int tw1 = pd->graphics->getTextWidth(NULL, options[1], strlen(options[1]), kASCIIEncoding, 0);
+    int btnW = maxi(tw0, tw1) + 32;
+    int gap = 24;
+    int totalBtnW = btnW * 2 + gap;
+    int bx0 = (SCREEN_W - totalBtnW) / 2;
+    int bx1 = bx0 + btnW + gap;
+
+    for (int i = 0; i < 2; i++) {
+        int bx = (i == 0) ? bx0 : bx1;
+        int tw = (i == 0) ? tw0 : tw1;
+        int textX = bx + (btnW - tw) / 2;
+
+        if (i == game.gameOverSelection) {
+            GFX_FILL(bx, btnY, btnW, 24, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeFillBlack);
+            pd->graphics->drawText(options[i], strlen(options[i]), kASCIIEncoding, textX, btnY + 4);
+            pd->graphics->setDrawMode(kDrawModeFillWhite);
+            GFX_FILL(bx - 10, btnY + 8, 4, 8, kColorWhite);
+            GFX_FILL(bx + btnW + 6, btnY + 8, 4, 8, kColorWhite);
+        } else {
+            GFX_RECT(bx, btnY, btnW, 24, kColorWhite);
+            pd->graphics->drawText(options[i], strlen(options[i]), kASCIIEncoding, textX, btnY + 4);
+        }
+    }
+
+    // Dithered bottom border
+    for (int x = 20; x < SCREEN_W - 20; x += 2)
+        GFX_FILL(x, 232, 1, 1, kColorWhite);
+    for (int x = 21; x < SCREEN_W - 20; x += 2)
+        GFX_FILL(x, 234, 1, 1, kColorWhite);
 
     pd->graphics->setDrawMode(kDrawModeCopy);
 }
@@ -554,21 +672,50 @@ void ui_draw_upgrade_screen(void)
     if (game.fontBold) pd->graphics->setFont(NULL);
     ui_draw_centered_text("Choose an upgrade:", 26);
 
+    // Slide-in offset (cards slide from right, 8 frames)
+    int slideOff = (game.upgradeOpenTimer > 0) ? game.upgradeOpenTimer * 6 : 0;
+
     for (int i = 0; i < game.upgradeChoiceCount; i++) {
         int y = 50 + i * 52;
         UpgradeChoice* c = &game.upgradeChoices[i];
-        int cx1 = 16, cy1 = y - 4, cw = SCREEN_W - 32, ch = 44;
+        int cx1 = 16 + slideOff, cy1 = y - 4, cw = SCREEN_W - 32, ch = 44;
+
+        // Weapon level delta label for weapon upgrades
+        char nameBuf[64];
+        if (c->type == 1 && c->name) {
+            int curLevel = 0;
+            for (int j = 0; j < player.weaponCount; j++) {
+                if (player.weapons[j].id == (WeaponId)c->id) { curLevel = player.weapons[j].level; break; }
+            }
+            if (curLevel > 0)
+                snprintf(nameBuf, sizeof(nameBuf), "> %s  L%d->L%d", c->name, curLevel, curLevel + 1);
+            else
+                snprintf(nameBuf, sizeof(nameBuf), "> %s", c->name);
+        } else if (c->name) {
+            snprintf(nameBuf, sizeof(nameBuf), "> %s", c->name);
+        } else {
+            nameBuf[0] = '\0';
+        }
 
         if (i == game.selectedUpgrade) {
             // Selected: white fill + border
             GFX_FILL(cx1, cy1, cw, ch, kColorWhite);
-            // Pulsing outer border
-            if ((game.frameCount / 8) % 2 == 0)
-                GFX_RECT(cx1 - 2, cy1 - 2, cw + 4, ch + 4, kColorWhite);
-            pd->graphics->setDrawMode(kDrawModeFillBlack);
+
+            // Evolution card: pulsing double-ring border
+            if (c->isEvolution) {
+                int phase = (game.frameCount / 4) % 2;
+                pd->graphics->setDrawMode(kDrawModeXOR);
+                GFX_RECT(cx1 - 4 - phase, cy1 - 4 - phase, cw + 8 + phase*2, ch + 8 + phase*2, kColorWhite);
+                pd->graphics->setDrawMode(kDrawModeFillBlack);
+            } else {
+                // Normal pulsing outer border
+                if ((game.frameCount / 8) % 2 == 0)
+                    GFX_RECT(cx1 - 2, cy1 - 2, cw + 4, ch + 4, kColorWhite);
+                pd->graphics->setDrawMode(kDrawModeFillBlack);
+            }
 
             // Draw large icon
-            if (c->type == 0 || c->type == 1) {
+            if (c->type == 0 || c->type == 1 || c->type == 3) {
                 LCDBitmap* icon = images_get_weapon_icon_large((WeaponId)c->id);
                 if (icon) pd->graphics->drawBitmap(icon, cx1 + 6, y + 6, kBitmapUnflipped);
             } else if (c->type == 2) {
@@ -577,13 +724,9 @@ void ui_draw_upgrade_screen(void)
             }
 
             // Name in bold font
-            if (c->name) {
-                char nameBuf[64];
-                snprintf(nameBuf, sizeof(nameBuf), "> %s", c->name);
-                if (game.fontBold) pd->graphics->setFont(game.fontBold);
-                pd->graphics->drawText(nameBuf, strlen(nameBuf), kASCIIEncoding, cx1 + 38, y + 2);
-                if (game.fontBold) pd->graphics->setFont(NULL);
-            }
+            if (game.fontBold) pd->graphics->setFont(game.fontBold);
+            pd->graphics->drawText(nameBuf, strlen(nameBuf), kASCIIEncoding, cx1 + 38, y + 2);
+            if (game.fontBold) pd->graphics->setFont(NULL);
             // Description in default font
             if (c->desc) pd->graphics->drawText(c->desc, strlen(c->desc), kASCIIEncoding, cx1 + 38, y + 20);
             pd->graphics->setDrawMode(kDrawModeFillWhite);
@@ -593,7 +736,7 @@ void ui_draw_upgrade_screen(void)
             GFX_RECT(cx1, cy1, cw, ch, kColorWhite);
 
             // Draw large icon
-            if (c->type == 0 || c->type == 1) {
+            if (c->type == 0 || c->type == 1 || c->type == 3) {
                 LCDBitmap* icon = images_get_weapon_icon_large((WeaponId)c->id);
                 if (icon) pd->graphics->drawBitmap(icon, cx1 + 6, y + 6, kBitmapUnflipped);
             } else if (c->type == 2) {
@@ -601,7 +744,7 @@ void ui_draw_upgrade_screen(void)
                 if (icon) pd->graphics->drawBitmap(icon, cx1 + 6, y + 6, kBitmapUnflipped);
             }
 
-            // Name in bold font
+            // Name in bold font (unselected: show without ">" prefix)
             if (c->name) {
                 if (game.fontBold) pd->graphics->setFont(game.fontBold);
                 pd->graphics->drawText(c->name, strlen(c->name), kASCIIEncoding, cx1 + 38, y + 2);
@@ -622,6 +765,14 @@ void ui_draw_upgrade_screen(void)
         GFX_FILL(cx2 - bLen, cy2 - 1, bLen, 1, kColorWhite);
         GFX_FILL(cx2 - 1, cy2 - bLen, 1, bLen, kColorWhite);
     }
+
+    // Reroll hint
+    if (game.rerollsLeft > 0) {
+        const char* hint = "~ Crank to reroll ~";
+        pd->graphics->drawText(hint, strlen(hint), kASCIIEncoding,
+            SCREEN_W / 2 - 55, SCREEN_H - 18);
+    }
+
     pd->graphics->setDrawMode(kDrawModeCopy);
 }
 
@@ -963,6 +1114,148 @@ void ui_draw_bestiary(void)
     if (scrollTop + visibleCount < ENEMY_TYPE_COUNT) {
         ui_draw_centered_text("v", SCREEN_H - 14);
     }
+
+    pd->graphics->setDrawMode(kDrawModeCopy);
+}
+
+// ---------------------------------------------------------------------------
+// Logbook (lifetime stats)
+// ---------------------------------------------------------------------------
+void ui_draw_logbook(void)
+{
+    GFX_CLEAR(kColorBlack);
+    pd->graphics->setDrawMode(kDrawModeFillWhite);
+
+    if (game.fontBold) pd->graphics->setFont(game.fontBold);
+    ui_draw_centered_text("KEEPER'S LOGBOOK", 6);
+    if (game.fontBold) pd->graphics->setFont(NULL);
+    GFX_FILL(10, 24, SCREEN_W - 20, 1, kColorWhite);
+
+    char buf[64];
+    int y = 34;
+    int lineH = 18;
+
+    snprintf(buf, sizeof(buf), "Total Runs: %lu", (unsigned long)game.totalRuns);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+
+    snprintf(buf, sizeof(buf), "Total Kills: %lu", (unsigned long)game.totalKills);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+
+    snprintf(buf, sizeof(buf), "Salvage Earned: %lu", (unsigned long)game.totalSalvage);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+
+    snprintf(buf, sizeof(buf), "Salvage Available: %d", save_get_salvage());
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+
+    snprintf(buf, sizeof(buf), "High Score: %d", game.highScore);
+    pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+
+    {
+        uint32_t t = game.bestTimeMs / 1000;
+        int bm = (int)(t / 60);
+        int bs = (int)(t % 60);
+        snprintf(buf, sizeof(buf), "Best Time: %d:%02d", bm, bs);
+        pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+    }
+
+    // Enemies discovered count
+    {
+        int discovered = 0;
+        for (int i = 0; i < ENEMY_TYPE_COUNT; i++)
+            if (game.unlockedEnemies[i]) discovered++;
+        snprintf(buf, sizeof(buf), "Creatures Discovered: %d/%d", discovered, ENEMY_TYPE_COUNT);
+        pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+    }
+
+    // Weapons discovered count
+    {
+        int discovered = 0;
+        for (int i = 0; i < WEAPON_COUNT; i++)
+            if (game.unlockedWeapons[i]) discovered++;
+        snprintf(buf, sizeof(buf), "Weapons Discovered: %d/%d", discovered, WEAPON_COUNT);
+        pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, 30, y); y += lineH;
+    }
+
+    // Footer
+    y = SCREEN_H - 18;
+    ui_draw_centered_text("B: Back", y);
+
+    pd->graphics->setDrawMode(kDrawModeCopy);
+}
+
+// ---------------------------------------------------------------------------
+// Keeper Select
+// ---------------------------------------------------------------------------
+void ui_draw_keeper_select(void)
+{
+    GFX_CLEAR(kColorBlack);
+    pd->graphics->setDrawMode(kDrawModeFillWhite);
+
+    if (game.fontBold) pd->graphics->setFont(game.fontBold);
+    ui_draw_centered_text("CHOOSE YOUR KEEPER", 6);
+    if (game.fontBold) pd->graphics->setFont(NULL);
+    GFX_FILL(10, 24, SCREEN_W - 20, 1, kColorWhite);
+
+    // Salvage display
+    {
+        char sbuf[32];
+        snprintf(sbuf, sizeof(sbuf), "Salvage: %d", save_get_salvage());
+        int sw = pd->graphics->getTextWidth(NULL, sbuf, strlen(sbuf), kASCIIEncoding, 0);
+        pd->graphics->drawText(sbuf, strlen(sbuf), kASCIIEncoding, SCREEN_W - sw - 10, 8);
+    }
+
+    char buf[64];
+    int itemH = 50;
+    int startY = 28;
+
+    for (int i = 0; i < KEEPER_COUNT; i++) {
+        const KeeperDef* k = &KEEPER_DEFS[i];
+        int y = startY + i * itemH;
+        int isSelected = (i == game.keeperSelection);
+        int isActive = (i == game.selectedKeeper);
+        int isUnlocked = game.keeperUnlocked[i];
+
+        if (isSelected) {
+            GFX_FILL(10, y, SCREEN_W - 20, itemH - 4, kColorWhite);
+            pd->graphics->setDrawMode(kDrawModeFillBlack);
+        } else {
+            GFX_RECT(10, y, SCREEN_W - 20, itemH - 4, kColorWhite);
+        }
+
+        int textX = 22;
+
+        if (isUnlocked) {
+            // Name + active indicator
+            if (game.fontBold) pd->graphics->setFont(game.fontBold);
+            if (isActive) {
+                snprintf(buf, sizeof(buf), "%s  [ACTIVE]", k->name);
+            } else {
+                snprintf(buf, sizeof(buf), "%s", k->name);
+            }
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, textX, y + 4);
+            if (game.fontBold) pd->graphics->setFont(NULL);
+
+            // Description + starter on same line
+            snprintf(buf, sizeof(buf), "%s  Starts: %s", k->desc, weapon_get_name((WeaponId)k->starterWeapon));
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, textX, y + 22);
+        } else {
+            // Locked — show name + cost
+            if (game.fontBold) pd->graphics->setFont(game.fontBold);
+            snprintf(buf, sizeof(buf), "%s", k->name);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, textX, y + 4);
+            if (game.fontBold) pd->graphics->setFont(NULL);
+
+            snprintf(buf, sizeof(buf), "Locked  -  %d Salvage", k->unlockCost);
+            pd->graphics->drawText(buf, strlen(buf), kASCIIEncoding, textX, y + 22);
+        }
+
+        if (isSelected) {
+            pd->graphics->setDrawMode(kDrawModeFillWhite);
+        }
+    }
+
+    // Footer
+    ui_draw_centered_text("A: Select   B: Back", SCREEN_H - 16);
 
     pd->graphics->setDrawMode(kDrawModeCopy);
 }

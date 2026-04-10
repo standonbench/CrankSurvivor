@@ -76,17 +76,46 @@ void bullets_update_all(void)
             int ei = hitIndices[h];
             if (enemies[ei].alive) {
                 enemy_damage(ei, b->dmg);
-                // Harpoon Knockback (Heaviness)
+                // Harpoon behavior
                 if (b->imageId == 1) {
-                    float vlen = sqrtf(b->vx * b->vx + b->vy * b->vy);
-                    if (vlen > 0.01f) {
-                        enemies[ei].x += (b->vx / vlen) * 12.0f;
-                        enemies[ei].y += (b->vy / vlen) * 12.0f;
+                    // Check if evolved (Leviathan Spine)
+                    int harpEvo = 0;
+                    for (int wi = 0; wi < player.weaponCount; wi++) {
+                        if (player.weapons[wi].id == WEAPON_HARPOON && player.weapons[wi].evolved) {
+                            harpEvo = 1; break;
+                        }
+                    }
+                    if (harpEvo && enemies[ei].alive) {
+                        // Root enemy for 60 frames (2s) then AoE burst
+                        enemies[ei].stunTimer = 60;
+                        enemies[ei].flashTimer = 4;
+                        // Spawn a mini depth charge at enemy position (delayed AoE)
+                        if (depthChargeCount < MAX_DEPTH_CHARGES) {
+                            DepthCharge* dc = &depthCharges[depthChargeCount];
+                            memset(dc, 0, sizeof(DepthCharge));
+                            dc->x = enemies[ei].x;
+                            dc->y = enemies[ei].y;
+                            dc->dmg = b->dmg * 0.5f;
+                            dc->blastRadius = 35.0f;
+                            dc->fuseFrames = 60; // explodes when root ends
+                            dc->alive = 1;
+                            depthChargeCount++;
+                        }
+                    } else {
+                        // Normal knockback
+                        float vlen = sqrtf(b->vx * b->vx + b->vy * b->vy);
+                        if (vlen > 0.01f) {
+                            enemies[ei].x += (b->vx / vlen) * 12.0f;
+                            enemies[ei].y += (b->vy / vlen) * 12.0f;
+                        }
                     }
                 }
                 if (!b->piercing) {
                     b->alive = 0;
                     break;
+                } else if (b->piercing < 255) {
+                    b->piercing--;
+                    if (b->piercing == 0) { b->alive = 0; break; }
                 }
                 if (b->retargets && !enemies[ei].alive) {
                     b->homingTarget = -1;
