@@ -134,15 +134,15 @@ void ui_draw_title(void)
     }
 
     // Menu options — large buttons for readability
-    const char* options[] = { "Start Game", "Armory", "Bestiary" };
+    const char* options[] = { "Start Game", "Armory", "Bestiary", "Designs", "Enemy Designs" };
     if (game.fontBold) pd->graphics->setFont(game.fontBold);
-    int btnW = 160, btnH = 26, startY = 152, spacing = 30;
-    for (int i = 0; i < 3; i++) {
+    int btnW = 160, btnH = 20, startY = 138, spacing = 21;
+    for (int i = 0; i < 5; i++) {
         int y = startY + i * spacing;
         int bx = (SCREEN_W - btnW) / 2;
         int tw = pd->graphics->getTextWidth(game.fontBold, options[i], strlen(options[i]), kASCIIEncoding, 0);
         int textX = bx + (btnW - tw) / 2;
-        int textY = y + (btnH - 16) / 2 + 1;
+        int textY = y + (btnH - 14) / 2;
         if (i + 1 == game.menuSelection) {
             GFX_FILL(bx, y, btnW, btnH, kColorWhite);
             pd->graphics->setDrawMode(kDrawModeFillBlack);
@@ -943,7 +943,8 @@ void ui_draw_bestiary(void)
             pd->graphics->setDrawMode(kDrawModeFillBlack);
         }
         if (game.unlockedEnemies[i]) {
-            LCDBitmap* img = images_get_enemy((EnemyType)i);
+            int af = (game.frameCount / 15) & 1;
+            LCDBitmap* img = images_get_enemy((EnemyType)i, af);
             if (img) pd->graphics->drawBitmap(img, 18, y + 4, kBitmapUnflipped);
             if (game.fontBold) pd->graphics->setFont(game.fontBold);
             pd->graphics->drawText(names[i], strlen(names[i]), kASCIIEncoding, 80, y + 2);
@@ -963,6 +964,191 @@ void ui_draw_bestiary(void)
     if (scrollTop + visibleCount < ENEMY_TYPE_COUNT) {
         ui_draw_centered_text("v", SCREEN_H - 14);
     }
+
+    pd->graphics->setDrawMode(kDrawModeCopy);
+}
+
+// ---------------------------------------------------------------------------
+// Design Gallery — show 6 character designs for comparison
+// ---------------------------------------------------------------------------
+void ui_draw_design_gallery(void)
+{
+    GFX_CLEAR(kColorBlack);
+    pd->graphics->setDrawMode(kDrawModeFillWhite);
+
+    // Title
+    if (game.fontBold) pd->graphics->setFont(game.fontBold);
+    ui_draw_centered_text("CHARACTER DESIGNS", 4);
+    if (game.fontBold) pd->graphics->setFont(NULL);
+
+    GFX_FILL(10, 22, SCREEN_W - 20, 1, kColorWhite);
+
+    int designCount = images_get_design_count();
+    int sel = game.designSelection;
+
+    // Layout: 3 designs per row, 2 rows
+    int cellW = 120;
+    int cellH = 95;
+    int startX = (SCREEN_W - cellW * 3) / 2 + 8;
+    int startY = 28;
+
+    // Walk animation frame
+    int animFrame = (game.frameCount / 8) % 4;
+
+    for (int i = 0; i < designCount; i++) {
+        int col = i % 3;
+        int row = i / 3;
+        int cx = startX + col * cellW;
+        int cy = startY + row * cellH;
+
+        // Selection highlight
+        if (i == sel) {
+            GFX_RECT(cx - 2, cy - 2, cellW - 12, cellH - 6, kColorWhite);
+            GFX_RECT(cx - 3, cy - 3, cellW - 10, cellH - 4, kColorWhite);
+        }
+
+        // Draw the sprite at 2x scale (30x30 -> 60x60)
+        LCDBitmap* frame = images_get_design_frame(i, animFrame);
+        if (frame) {
+            int bw, bh, brow;
+            uint8_t* mask;
+            uint8_t* data;
+            pd->graphics->getBitmapData(frame, &bw, &bh, &brow, &mask, &data);
+
+            int drawX = cx + (cellW - 14) / 2 - 30;
+            int drawY = cy + 4;
+
+            if (data) {
+                for (int py = 0; py < bh; py++) {
+                    for (int px = 0; px < bw; px++) {
+                        int byteIdx = py * brow + px / 8;
+                        int bitIdx = 7 - (px % 8);
+                        if (mask) {
+                            int maskSet = (mask[byteIdx] >> bitIdx) & 1;
+                            if (!maskSet) continue;
+                        }
+                        int pixSet = (data[byteIdx] >> bitIdx) & 1;
+                        if (pixSet) {
+                            GFX_FILL(drawX + px * 2, drawY + py * 2, 2, 2, kColorWhite);
+                        }
+                    }
+                }
+            } else {
+                pd->graphics->drawBitmap(frame, drawX + 15, drawY + 15, kBitmapUnflipped);
+            }
+        }
+
+        // Design name below sprite
+        const char* name = images_get_design_name(i);
+        int nameW = pd->graphics->getTextWidth(NULL, name, strlen(name), kASCIIEncoding, 0);
+        int nameX = cx + (cellW - 14) / 2 - nameW / 2;
+        int nameY = cy + cellH - 20;
+        if (i == sel) {
+            if (game.fontBold) pd->graphics->setFont(game.fontBold);
+            nameW = pd->graphics->getTextWidth(game.fontBold, name, strlen(name), kASCIIEncoding, 0);
+            nameX = cx + (cellW - 14) / 2 - nameW / 2;
+        }
+        pd->graphics->drawText(name, strlen(name), kASCIIEncoding, nameX, nameY);
+        if (i == sel && game.fontBold) pd->graphics->setFont(NULL);
+    }
+
+    // Navigation hint at bottom
+    pd->graphics->drawText("D-Pad: Browse   B: Back", 23, kASCIIEncoding, 110, SCREEN_H - 14);
+
+    pd->graphics->setDrawMode(kDrawModeCopy);
+}
+
+// ---------------------------------------------------------------------------
+// Enemy Design Gallery — show Original vs Redesign per enemy, animated
+// ---------------------------------------------------------------------------
+void ui_draw_enemy_designs(void)
+{
+    GFX_CLEAR(kColorBlack);
+    pd->graphics->setDrawMode(kDrawModeFillWhite);
+
+    static const char* enemyNames[] = {
+        "Creeper","Tendril","Wraith","Abyssal","Seer","Lamprey","Bloat","Harbinger"
+    };
+
+    int et = game.enemyDesignEnemy;
+    int designCount = images_get_enemy_design_count();
+    int animFrame = (game.frameCount / 15) & 1; // toggle every 15 frames
+
+    // Title
+    if (game.fontBold) pd->graphics->setFont(game.fontBold);
+    char title[48];
+    snprintf(title, sizeof(title), "ENEMY DESIGNS: %s", enemyNames[et]);
+    ui_draw_centered_text(title, 4);
+    if (game.fontBold) pd->graphics->setFont(NULL);
+
+    GFX_FILL(10, 22, SCREEN_W - 20, 1, kColorWhite);
+
+    // Up/Down arrows
+    if (et > 0) {
+        pd->graphics->drawText("^", 1, kASCIIEncoding, 4, 4);
+    }
+    if (et < ENEMY_TYPE_COUNT - 1) {
+        pd->graphics->drawText("v", 1, kASCIIEncoding, 4, 14);
+    }
+
+    // Layout: 2 designs side by side, generous spacing
+    int cellW = 180;
+    int totalW = cellW * designCount;
+    int startX = (SCREEN_W - totalW) / 2;
+    int spriteY = 50;
+
+    for (int d = 0; d < designCount; d++) {
+        int cx = startX + d * cellW;
+
+        // Selection highlight
+        if (d == game.enemyDesignVariant) {
+            GFX_RECT(cx + 4, 26, cellW - 10, SCREEN_H - 54, kColorWhite);
+            GFX_RECT(cx + 5, 27, cellW - 12, SCREEN_H - 56, kColorWhite);
+        }
+
+        // Draw animated sprite centered in cell
+        LCDBitmap* img = images_get_enemy_design((EnemyType)et, d, animFrame);
+        if (img) {
+            int bw, bh, brow;
+            uint8_t* mask;
+            uint8_t* data;
+            pd->graphics->getBitmapData(img, &bw, &bh, &brow, &mask, &data);
+
+            // 2x scale for all sprites in gallery
+            int drawX = cx + cellW / 2 - bw;
+            int drawY = spriteY + 50 - bh;
+
+            if (data) {
+                for (int py = 0; py < bh; py++) {
+                    for (int px = 0; px < bw; px++) {
+                        int byteIdx = py * brow + px / 8;
+                        int bitIdx = 7 - (px % 8);
+                        if (mask) {
+                            if (!((mask[byteIdx] >> bitIdx) & 1)) continue;
+                        }
+                        if ((data[byteIdx] >> bitIdx) & 1) {
+                            GFX_FILL(drawX + px * 2, drawY + py * 2, 2, 2, kColorWhite);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Design label below
+        const char* label = images_get_enemy_design_label(d);
+        int lw = pd->graphics->getTextWidth(NULL, label, strlen(label), kASCIIEncoding, 0);
+        int lx = cx + cellW / 2 - lw / 2;
+        if (d == game.enemyDesignVariant) {
+            if (game.fontBold) pd->graphics->setFont(game.fontBold);
+            lw = pd->graphics->getTextWidth(game.fontBold, label, strlen(label), kASCIIEncoding, 0);
+            lx = cx + cellW / 2 - lw / 2;
+        }
+        pd->graphics->drawText(label, strlen(label), kASCIIEncoding, lx, SCREEN_H - 28);
+        if (d == game.enemyDesignVariant && game.fontBold) pd->graphics->setFont(NULL);
+    }
+
+    // Nav hint
+    pd->graphics->drawText("L/R: Design  U/D: Enemy  B: Back", 33, kASCIIEncoding, 65, SCREEN_H - 12);
 
     pd->graphics->setDrawMode(kDrawModeCopy);
 }

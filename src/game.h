@@ -87,7 +87,9 @@ typedef enum {
     STATE_CRATE_REWARD,
     STATE_VICTORY,
     STATE_ARMORY,
-    STATE_BESTIARY
+    STATE_BESTIARY,
+    STATE_DESIGN_GALLERY,
+    STATE_ENEMY_DESIGNS
 } GameState;
 
 typedef enum {
@@ -480,6 +482,13 @@ typedef struct {
     // Bestiary selection (separate from armorySelection)
     int bestiarySelection;
 
+    // Design gallery selection (0-5 for 6 designs)
+    int designSelection;
+
+    // Enemy design gallery
+    int enemyDesignEnemy;   // which enemy type (0-7)
+    int enemyDesignVariant; // which variant (0-3)
+
     // Slow-motion timer (crate drama)
     int slowMotionTimer;
 
@@ -611,6 +620,8 @@ void ui_draw_cutscene(void);
 void ui_draw_crate_reward(void);
 void ui_draw_armory(void);
 void ui_draw_bestiary(void);
+void ui_draw_design_gallery(void);
+void ui_draw_enemy_designs(void);
 void ui_draw_tier_announcement(void);
 void ui_draw_centered_text(const char* text, int y);
 void ui_draw_opening_scene(void);
@@ -620,7 +631,7 @@ void ui_draw_sunrise_scene(void);
 
 // images.c
 void images_init(void);
-LCDBitmap* images_get_enemy(EnemyType type);
+LCDBitmap* images_get_enemy(EnemyType type, int frame);
 LCDBitmap* images_get_player_frame(int frame);
 LCDBitmap* images_get_bullet(void);
 LCDBitmap* images_get_enemy_bullet(void);
@@ -645,6 +656,12 @@ LCDBitmap* images_get_bolt_sprite(void);
 LCDBitmap* images_get_wisp_sprite(void);
 LCDBitmap* images_get_drop_shadow(void);
 LCDBitmap* images_get_vignette(void);
+LCDBitmap* images_get_design_frame(int design, int frame);
+const char* images_get_design_name(int design);
+int images_get_design_count(void);
+LCDBitmap* images_get_enemy_design(EnemyType type, int design, int frame);
+const char* images_get_enemy_design_label(int design);
+int images_get_enemy_design_count(void);
 int images_get_enemy_half_w(EnemyType type);
 int images_get_enemy_half_h(EnemyType type);
 

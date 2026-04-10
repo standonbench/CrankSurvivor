@@ -235,7 +235,8 @@ void rendering_draw_playing(void)
 
         {
             LCDBitmapFlip flip = (e->animFrame % 24 >= 12) ? kBitmapFlippedX : kBitmapUnflipped;
-            LCDBitmap* img = images_get_enemy(e->type);
+            int animF = (e->animFrame / 15) & 1;  // toggle every 15 frames (~0.5s)
+            LCDBitmap* img = images_get_enemy(e->type, animF);
             if (e->flashTimer > 0) {
                 // Draw sprite inverted for hit flash
                 pd->graphics->setDrawMode(kDrawModeInverted);

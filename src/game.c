@@ -1094,7 +1094,7 @@ int update(void* userdata)
             game.menuSelection = maxi(1, game.menuSelection - 1);
             sound_play_menu();
         } else if (pushed & kButtonDown) {
-            game.menuSelection = mini(3, game.menuSelection + 1);
+            game.menuSelection = mini(5, game.menuSelection + 1);
             sound_play_menu();
         } else if (pushed & kButtonA) {
             if (game.menuSelection == 1) {
@@ -1102,9 +1102,16 @@ int update(void* userdata)
             } else if (game.menuSelection == 2) {
                 game.armorySelection = 1;
                 game.state = STATE_ARMORY;
-            } else {
+            } else if (game.menuSelection == 3) {
                 game.bestiarySelection = 1;
                 game.state = STATE_BESTIARY;
+            } else if (game.menuSelection == 4) {
+                game.designSelection = 0;
+                game.state = STATE_DESIGN_GALLERY;
+            } else {
+                game.enemyDesignEnemy = 0;
+                game.enemyDesignVariant = 0;
+                game.state = STATE_ENEMY_DESIGNS;
             }
         }
         break;
@@ -1292,6 +1299,54 @@ int update(void* userdata)
         else if (pushed & kButtonDown) game.bestiarySelection = mini(ENEMY_TYPE_COUNT, game.bestiarySelection + 1);
         else if (pushed & kButtonB) game.state = STATE_TITLE;
         break;
+
+    case STATE_DESIGN_GALLERY:
+    {
+        ui_draw_design_gallery();
+        int maxDesign = images_get_design_count() - 1;
+        if (pushed & kButtonRight) {
+            game.designSelection = mini(maxDesign, game.designSelection + 1);
+            sound_play_menu();
+        } else if (pushed & kButtonLeft) {
+            game.designSelection = maxi(0, game.designSelection - 1);
+            sound_play_menu();
+        } else if (pushed & kButtonDown) {
+            game.designSelection = mini(maxDesign, game.designSelection + 3);
+            sound_play_menu();
+        } else if (pushed & kButtonUp) {
+            game.designSelection = maxi(0, game.designSelection - 3);
+            sound_play_menu();
+        } else if (pushed & kButtonB) {
+            game.state = STATE_TITLE;
+        }
+        break;
+    }
+
+    case STATE_ENEMY_DESIGNS:
+    {
+        ui_draw_enemy_designs();
+        int maxVariant = images_get_enemy_design_count() - 1;
+        if (pushed & kButtonRight) {
+            game.enemyDesignVariant = mini(maxVariant, game.enemyDesignVariant + 1);
+            sound_play_menu();
+        } else if (pushed & kButtonLeft) {
+            game.enemyDesignVariant = maxi(0, game.enemyDesignVariant - 1);
+            sound_play_menu();
+        } else if (pushed & kButtonDown) {
+            if (game.enemyDesignEnemy < ENEMY_TYPE_COUNT - 1) {
+                game.enemyDesignEnemy++;
+                sound_play_menu();
+            }
+        } else if (pushed & kButtonUp) {
+            if (game.enemyDesignEnemy > 0) {
+                game.enemyDesignEnemy--;
+                sound_play_menu();
+            }
+        } else if (pushed & kButtonB) {
+            game.state = STATE_TITLE;
+        }
+        break;
+    }
     }
 
     // Debug overlay
