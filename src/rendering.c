@@ -235,7 +235,7 @@ void rendering_draw_playing(void)
 
         {
             LCDBitmapFlip flip = (e->animFrame % 24 >= 12) ? kBitmapFlippedX : kBitmapUnflipped;
-            int animF = (e->animFrame / 15) & 1;  // toggle every 15 frames (~0.5s)
+            int animF = (e->animFrame / 15) & 1;
             LCDBitmap* img = images_get_enemy(e->type, animF);
             if (e->flashTimer > 0) {
                 // Draw sprite inverted for hit flash

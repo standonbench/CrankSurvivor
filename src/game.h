@@ -87,9 +87,7 @@ typedef enum {
     STATE_CRATE_REWARD,
     STATE_VICTORY,
     STATE_ARMORY,
-    STATE_BESTIARY,
-    STATE_DESIGN_GALLERY,
-    STATE_ENEMY_DESIGNS
+    STATE_BESTIARY
 } GameState;
 
 typedef enum {
@@ -482,13 +480,6 @@ typedef struct {
     // Bestiary selection (separate from armorySelection)
     int bestiarySelection;
 
-    // Design gallery selection (0-5 for 6 designs)
-    int designSelection;
-
-    // Enemy design gallery
-    int enemyDesignEnemy;   // which enemy type (0-7)
-    int enemyDesignVariant; // which variant (0-3)
-
     // Slow-motion timer (crate drama)
     int slowMotionTimer;
 
@@ -620,8 +611,6 @@ void ui_draw_cutscene(void);
 void ui_draw_crate_reward(void);
 void ui_draw_armory(void);
 void ui_draw_bestiary(void);
-void ui_draw_design_gallery(void);
-void ui_draw_enemy_designs(void);
 void ui_draw_tier_announcement(void);
 void ui_draw_centered_text(const char* text, int y);
 void ui_draw_opening_scene(void);
